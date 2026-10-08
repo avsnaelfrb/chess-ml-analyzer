@@ -43,7 +43,12 @@ const colorName = (color: Color) => (color === 'white' ? 'Putih' : 'Hitam')
 const inBounds = (r: number, c: number) => r >= 0 && r < 8 && c >= 0 && c < 8
 const squareName = (s: Square) => `${files[s.c]}${8 - s.r}`
 
-function pseudoMoves(state: (Piece | null)[][], from: Square, includeCastle = true): Move[] {
+function pseudoMoves(
+  state: (Piece | null)[][],
+  from: Square,
+  includeCastle = true,
+  allowKingCapture = false,
+): Move[] {
   const piece = state[from.r][from.c]
   if (!piece) return []
   const result: Move[] = []
@@ -53,7 +58,7 @@ function pseudoMoves(state: (Piece | null)[][], from: Square, includeCastle = tr
     const target = state[r][c]
     if (!target) {
       result.push({ from, r, c, ...extra })
-    } else if (target.color !== piece.color && target.kind !== 'king') {
+    } else if (target.color !== piece.color && (allowKingCapture || target.kind !== 'king')) {
       result.push({ from, r, c, ...extra })
     }
     return !target
@@ -72,7 +77,11 @@ function pseudoMoves(state: (Piece | null)[][], from: Square, includeCastle = tr
       const r = from.r + dir
       const c = from.c + dc
       if (!inBounds(r, c)) continue
-      if (state[r][c] && state[r][c]!.color !== piece.color && state[r][c]!.kind !== 'king') {
+      if (
+        state[r][c] &&
+        state[r][c]!.color !== piece.color &&
+        (allowKingCapture || state[r][c]!.kind !== 'king')
+      ) {
         result.push({ from, r, c })
       }
       if (enPassant.value && enPassant.value.r === r && enPassant.value.c === c) {
@@ -194,7 +203,7 @@ function inCheck(state: (Piece | null)[][], color: Color) {
     row.some(
       (p, c) =>
         p?.color === opposite(color) &&
-        pseudoMoves(state, { r, c }, false).some(m => m.r === king!.r && m.c === king!.c),
+        pseudoMoves(state, { r, c }, false, true).some(m => m.r === king!.r && m.c === king!.c),
     ),
   )
 }
