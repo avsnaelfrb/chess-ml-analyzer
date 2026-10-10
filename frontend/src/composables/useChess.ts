@@ -1,6 +1,7 @@
 import { computed, ref } from 'vue'
 import { cloneBoard, createBoard, initialCastling } from '../lib/chess/board'
 import { allLegal, applyMove, inCheck, legalMoves, opposite, type Position } from '../lib/chess/engine'
+import { toFen } from '../lib/chess/fen'
 import { colorName, moveNotation } from '../lib/chess/notation'
 import type { Castling, Color, Kind, Move, Snapshot, Square } from '../types/chess'
 
@@ -25,6 +26,15 @@ export function useChess() {
   )
   const checked = computed(() => inCheck(currentPosition(), turn.value))
   const gameOver = computed(() => allLegal(currentPosition(), turn.value).length === 0)
+  const fen = computed(() =>
+    toFen({
+      board: board.value,
+      turn: turn.value,
+      castling: castling.value,
+      enPassant: enPassant.value,
+      ply: moves.value.length,
+    }),
+  )
   const status = computed(() =>
     gameOver.value
       ? checked.value
@@ -116,6 +126,7 @@ export function useChess() {
     legalTargets,
     checked,
     gameOver,
+    fen,
     status,
     history,
     moves,
