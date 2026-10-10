@@ -5,8 +5,9 @@ backend + model). Tujuannya menyelaraskan scope, kontrak, dan status antar
 bagian. Setiap agent/anggota tim membaca ini lebih dulu sebelum bekerja.
 
 > **Status terakhir diperbarui:** Oktober 2026.
-> Ringkasan cepat: **kontrak API sudah final dan backend sudah siap**; frontend
-> sudah punya game catur dan tinggal mengintegrasikan pemanggilan klasifikasi.
+> Ringkasan cepat: **kontrak API final, backend siap, dan integrasi klasifikasi
+> frontend sudah selesai**. Game catur di frontend kini mengirim FEN posisi
+> terkini ke backend dan menampilkan label fase + confidence.
 
 ## 1. Tujuan project
 
@@ -81,15 +82,16 @@ Aturan:
 | Area | Status | Catatan |
 |---|---|---|
 | Game catur frontend | ✅ Selesai | Vue 3 + TS + Vite, pemain lokal, aturan langkah lengkap |
-| Integrasi klasifikasi frontend | ⏳ Belum | `classify` client, `AnalysisPanel`, proxy `/api` |
+| Integrasi klasifikasi frontend | ✅ Selesai | `src/api/classify.ts`, `AnalysisPanel`, proxy `/api` |
 | Endpoint backend (`/api/health`, `/api/classify`) | ✅ Selesai | FastAPI, kontrak sesuai bagian 3 |
 | Model klasifikasi | ✅ Baseline siap | `model.joblib` terlatih dari dataset |
 | Dataset | ✅ Tersedia | `datasets/moves.csv`, sudah berlabel `phase` |
 | Test backend | 🟡 Sebagian | 5 test API hijau; test fitur/dataset belum |
 | Dokumentasi | 🟡 Berjalan | `backend/AGENT.md`, `frontend/AGENT.md` |
 
-**Implikasi untuk frontend:** backend sudah bisa dipanggil sekarang. Frontend
-dapat mengerjakan integrasi (bagian 7) tanpa menunggu perubahan backend lagi.
+**Implikasi:** integrasi frontend (bagian 7) sudah terpasang dan teruji
+end-to-end (health, classify, dan error `422` lewat proxy Vite). Sisa pekerjaan
+berada di sisi backend/ML (test fitur/dataset, laporan metrik) dan dataset.
 
 ## 5. Dataset
 
@@ -123,13 +125,15 @@ model. Perlu dijelaskan apa adanya saat melaporkan metrik.
 
 ## 7. Tanggung jawab frontend
 
-Perubahan yang direncanakan:
+Implementasi (sudah selesai):
 
 | File | Fungsi |
 |---|---|
 | `src/lib/chess/fen.ts` | Bangun FEN dari state papan |
 | `src/api/classify.ts` | Client `fetch` ke `POST /api/classify` |
 | `src/components/AnalysisPanel.vue` | Tombol "Analisis posisi" + tampilkan label & confidence |
+| `src/composables/useChess.ts` | Expose `fen` computed dari state permainan |
+| `src/style.css` | Gaya panel analisis |
 | `vite.config.ts` | Proxy dev `/api` → `http://localhost:8000` |
 | `src/App.vue` | Pasang `AnalysisPanel` |
 
@@ -149,6 +153,9 @@ Perilaku UI:
 - Tombol memakai FEN posisi saat ini.
 - State: idle / loading / sukses (label + confidence) / error.
 - Tidak ada autentikasi, tidak ada penyimpanan.
+
+Catatan: base URL default relatif (`/api`, memakai proxy Vite saat dev). Set
+`VITE_API_BASE` bila ingin menembak backend langsung tanpa proxy.
 
 ## 8. Tanggung jawab backend
 
@@ -181,7 +188,7 @@ backend/
 |---|---|---|---|
 | M0 | FEN generator + endpoint echo | Frontend kirim FEN, backend balas FEN sama | ✅ (digantikan classify nyata) |
 | M1 | Feature + labeling + train + model | `/api/classify` balas salah satu dari 3 label | ✅ |
-| M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | 🔜 sisi frontend |
+| M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | ✅ |
 | M3 | Test + evaluasi model | Test hijau, metrik dilaporkan | 🟡 test API hijau, metrik ada |
 
 ## 10. Non-goals (MVP)
