@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AnalysisPanel from './components/AnalysisPanel.vue'
 import ChessBoard from './components/ChessBoard.vue'
 import GameControls from './components/GameControls.vue'
 import MoveHistory from './components/MoveHistory.vue'
@@ -15,6 +16,7 @@ const {
   legalTargets,
   checked,
   gameOver,
+  fen,
   status,
   history,
   moves,
@@ -54,6 +56,7 @@ function promote(kind: Kind) {
       </div>
       <aside class="side-panel">
         <StatusPanel :status="status" :game-over="gameOver" :checked="checked" />
+        <AnalysisPanel :fen="fen" />
         <MoveHistory :moves="moves" />
         <GameControls :can-undo="history.length > 0" @undo="undo" @reset="reset" />
         <p class="tip"><span>✦</span> Klik bidak lalu pilih kotak yang disorot untuk bergerak.</p>
