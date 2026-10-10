@@ -43,7 +43,9 @@ backend/
 │   └── moves.csv           # Dataset mentah (gitignored)
 └── tests/
     ├── __init__.py
-    └── test_api.py         # Test endpoint API (5 test)
+    ├── test_api.py             # Test endpoint API (5 test)
+    ├── test_features.py        # Test ekstraksi fitur FEN (7 test)
+    └── test_model_behavior.py  # Karakterisasi model di posisi skakmat (5 test)
 ```
 
 ## Kontrak API (FROZEN mengikuti PLANNING.md)
@@ -158,8 +160,8 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 |---|---|---|
 | M0 | FEN generator + endpoint echo | Selesai (digantikan endpoint classify nyata) |
 | M1 | Feature + labeling + train + model | Selesai |
-| M2 | Integrasi `AnalysisPanel` + proxy + CORS | Backend siap; sisi frontend belum |
-| M3 | Test + evaluasi model | Test API selesai; metrik dilaporkan |
+| M2 | Integrasi `AnalysisPanel` + proxy + CORS | Selesai (frontend sudah terpasang) |
+| M3 | Test + evaluasi model | Test API + fitur + perilaku model hijau; metrik dilaporkan |
 
 ## Catatan / utang teknis
 
@@ -169,7 +171,16 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
   ada tapi tidak boleh diandalkan.
 - `fastapi.testclient` memunculkan `StarletteDeprecationWarning` soal `httpx`;
   belum berdampak, pantau saat upgrade.
-- Belum ada test khusus untuk `app/ml/features.py` dan `dataset.py`.
+- Test `test_features.py` sudah mencakup fitur; loader `dataset.py` belum punya
+  test khusus.
+- **Temuan: label `phase` vs skakmat.** Model mengklasifikasi fase berdasarkan
+  nomor langkah/material; skakmat bisa terjadi di fase mana pun, sehingga
+  posisi skakmat tetap dapat berlabel `middlegame` (per definisi dataset).
+  `tests/test_model_behavior.py` mengunci perilaku ini. Keputusan "game over"
+  adalah produk/UX, belum ditentukan.
+- **Batasan OOD model.** Posisi material rendah dengan `fullmove_number` kecil
+  (tidak ada di dataset) diekstrapolasi ke default `middlegame`. Fitur yang
+  lebih tahan OOD adalah kandidat revisi di masa depan.
 
 ## Aturan kerja agent
 
