@@ -101,6 +101,25 @@ Task di atas didefinisikan di `deno.json` dan memetakan script yang sama di `pac
 - FEN dibangun di `src/lib/chess/fen.ts` dan diekspos sebagai `fen` computed dari `useChess`; `halfmove_clock` selalu `0` dan `fullmove_number = floor(ply / 2) + 1`.
 - `AnalysisPanel.vue` menerima prop `fen`, memanggil `classifyFen`, dan menangani state idle / loading / sukses / error. Hasil direset ketika posisi berubah.
 
+## Perubahan backend yang perlu diketahui
+
+Per Oktober 2026, struktur internal backend dirapikan **(tanpa mengubah kontrak
+API)**. Frontend **tidak perlu penyesuaian apa pun** karena endpoint, bentuk
+respons, CORS, dan proxy Vite tetap sama.
+
+- Sisi HTTP backend digabung ke `backend/app/api.py` (skema + classifier +
+  endpoint + app factory).
+- Sisi ML digabung ke `backend/app/ml.py` (label + fitur FEN + dataset + training).
+- Entrypoint training kini `uv run python train.py` dari folder `backend/`
+  (sebelumnya `python -m app.ml.train`).
+- Model ditambah fitur pola struktur pion, tetapi **input/response API tidak
+  berubah**: `{ "fen": "..." }` → `{ label, confidence, probabilities, model_version }`.
+- Endpoint & error tetap: `GET /api/health`, `POST /api/classify`
+  (`422` FEN invalid, `503` model belum ada).
+
+Dampak ke frontend: **nihil**. Selama backend jalan
+(`uv run uvicorn main:app --reload`), proxy `/api` tetap berfungsi seperti semula.
+
 ## Catatan implementasi
 
 - State permainan dan aksi berada di `src/composables/useChess.ts`; `App.vue` hanya merangkai komponen. Aturan catur murni (tanpa Vue) berada di `src/lib/chess/engine.ts` sehingga bisa diuji terpisah.
