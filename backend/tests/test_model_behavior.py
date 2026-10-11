@@ -18,13 +18,13 @@ from pathlib import Path
 import chess
 import pytest
 
-from app.classifier import PhaseClassifier
+from app.api import PhaseClassifier
 from app.config import MODEL_PATH
-from app.ml.labeling import PHASES
+from app.ml import PHASES
 
 pytestmark = pytest.mark.skipif(
     not Path(MODEL_PATH).exists(),
-    reason="artifact model belum ada; jalankan `uv run python -m app.ml.train`",
+    reason="artifact model belum ada; jalankan `uv run python train.py`",
 )
 
 # Posisi skakmat yang benar (diverifikasi lewat python-chess di test ini).
