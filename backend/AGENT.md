@@ -11,7 +11,9 @@ satu string FEN. Kontraknya mengikuti `PLANNING.md` di root repo.
 - Package manager: `uv` (`pyproject.toml` + `uv.lock`)
 - Target kelas: `opening` | `middlegame` | `endgame`
 - Input model: **FEN saja**
-- Dataset: `datasets/moves.csv` (Kaggle, tahap eksperimen, gitignored)
+- Dataset: `datasets/moves.csv` (Kaggle, tahap eksperimen, gitignored).
+  `datasets/puzzles.csv` (1176 puzzle taktis) tersedia sebagai bahan eksplorasi
+  berikutnya.
 
 ## Struktur saat ini
 
@@ -19,7 +21,8 @@ satu string FEN. Kontraknya mengikuti `PLANNING.md` di root repo.
 backend/
 ├── AGENT.md                # Catatan konteks dan aturan kerja agent
 ├── README.md               # Panduan pakai singkat
-├── main.py                 # Entrypoint ASGI: `from app.server import app`
+├── main.py                 # Entrypoint ASGI: `from app.api import app`
+├── train.py                # Entrypoint training: `from app.ml import main`
 ├── pyproject.toml          # Dependency + konfigurasi pytest
 ├── uv.lock                 # Lockfile dependency
 ├── .python-version         # 3.14
@@ -27,16 +30,8 @@ backend/
 ├── app/
 │   ├── __init__.py
 │   ├── config.py           # Path & setting (env CHESS_*)
-│   ├── schemas.py          # Kontrak request/response (pydantic)
-│   ├── classifier.py       # PhaseClassifier: muat model.joblib + predict
-│   ├── routes.py           # Endpoint /api/health, /api/classify
-│   ├── server.py           # App factory + CORS
-│   └── ml/
-│       ├── __init__.py
-│       ├── labeling.py     # Definisi label fase + normalisasi
-│       ├── features.py     # FEN -> fitur (satu-satunya sumber fitur)
-│       ├── dataset.py      # Loader CSV streaming + sampling
-│       └── train.py        # Script training + evaluasi + simpan model
+│   ├── api.py              # Skema + classifier + endpoint + app factory (satu modul)
+│   └── ml.py               # Label + fitur FEN + loader dataset + training (satu modul)
 ├── models/
 │   └── .gitkeep            # model.joblib & metrics.json (gitignored)
 ├── datasets/
@@ -45,8 +40,13 @@ backend/
     ├── __init__.py
     ├── test_api.py             # Test endpoint API (5 test)
     ├── test_features.py        # Test ekstraksi fitur FEN (7 test)
+    ├── test_pawn_structure.py  # Test pola struktur pion (8 test)
     └── test_model_behavior.py  # Karakterisasi model di posisi skakmat (5 test)
 ```
+
+Catatan struktur: demi mudah dipahami tanpa lompat file, sisi HTTP terkumpul di
+`app/api.py` (skema → classifier → endpoint → app factory) dan sisi ML di
+`app/ml.py` (label → fitur → dataset → training).
 
 ## Kontrak API (FROZEN mengikuti PLANNING.md)
 
@@ -78,7 +78,7 @@ Respons `/api/classify`:
 
 ```text
 POST /api/classify {fen}
-  -> routes.classify (cek model siap -> 503 kalau belum)
+  -> api.classify (cek model siap -> 503 kalau belum)
   -> PhaseClassifier.predict(fen)
   -> model.predict_proba([fen])   # model = Pipeline
        -> FenFeatureExtractor.transform  # FEN -> vektor fitur
@@ -97,12 +97,17 @@ POST /api/classify {fen}
 - Distribusi label: `middlegame` ~54%, `opening` ~30%, `endgame` ~15%.
 - Label diambil **apa adanya** dari kolom `phase`; tidak ada heuristik label
   buatan sendiri (menghindari sirkularitas).
+- `datasets/puzzles.csv` (gitignored) — 1176 puzzle taktis berlabel tema
+  (7 kelas: `capture`/`check`/`mate`/`promotion`/dll.) + `difficulty_score`.
+  **Belum dipakai produksi**; kandidat eksplorasi. Sifatnya taktis (butuh fitur
+  dinamis), uji awal klasifikasi tema ~0.495 ≈ baseline.
 
 ## Fitur FEN
 
-Didefinisikan di `app/ml/features.py` (`FEATURE_NAMES`), antara lain:
+Didefinisikan di `app/ml.py` (`FEATURE_NAMES`), antara lain:
 material & jumlah bidak per warna, jumlah tiap jenis bidak (pion–raja), total
-material/bidak, jumlah major & minor, giliran (`side_to_move_white`), `ply`,
+material/bidak, jumlah major & minor, pola struktur pion per warna (pion dobel,
+terisolasi, passed, pulau pion), giliran (`side_to_move_white`), `ply`,
 `fullmove_number`, `halfmove_clock`, hak rokade, dan en passant.
 
 ## Keputusan desain penting
@@ -127,9 +132,9 @@ material/bidak, jumlah major & minor, giliran (`side_to_move_white`), `ply`,
 uv sync                         # pasang/segarkan dependency
 
 # training (default: sampel 200k baris)
-uv run python -m app.ml.train
-uv run python -m app.ml.train --sample 0           # seluruh dataset
-uv run python -m app.ml.train --sample 500000 --trees 300
+uv run python train.py
+uv run python train.py --sample 0           # seluruh dataset
+uv run python train.py --sample 500000 --trees 300
 
 # jalankan API
 uv run uvicorn main:app --reload
@@ -143,11 +148,15 @@ uv run pytest
 Model default (sampel 200k baris, 200 pohon, seed 42):
 
 - Split: train 160.153 baris / 38.417 game, test 39.842 baris / 9.605 game.
-- Akurasi test: **~0.9999**; log_loss ~0.0023; baseline mayoritas ~0.537.
+- Akurasi test: **~0.9999**; log_loss ~0.0028; baseline mayoritas ~0.537.
 - Akurasi dedup FEN: ~0.9999.
 - Fitur paling penting: `fullmove_number`, `ply`, `material_total`,
-  `material_black`, `piece_count_total`.
+  `material_black`, `material_white`.
 - Artifact: `models/model.joblib` dan `models/metrics.json` (keduanya gitignored).
+
+Catatan: ini hasil setelah penambahan fitur pola struktur pion. Fitur pion belum
+masuk Top-10 karena `ply`/material masih dominan — diharapkan lebih berguna pada
+masalah yang sifatnya posisional (mis. tema puzzle), bukan fase.
 
 Catatan penting: akurasi yang sangat tinggi ini **bukan** ukuran "kecerdasan"
 model, melainkan indikasi bahwa definisi `phase` pada dataset sangat
@@ -161,18 +170,25 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 | M0 | FEN generator + endpoint echo | Selesai (digantikan endpoint classify nyata) |
 | M1 | Feature + labeling + train + model | Selesai |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Selesai (frontend sudah terpasang) |
-| M3 | Test + evaluasi model | Test API + fitur + perilaku model hijau; metrik dilaporkan |
+| M3 | Test + evaluasi model | 25 test hijau (API/fitur/pola pion/perilaku); metrik dilaporkan |
+| M4 | Rapikan struktur backend | Selesai: 2 modul inti (`app/api.py` + `app/ml.py`), entrypoint `train.py` |
+| M5 | Fitur pola struktur pion | Selesai: 8 fitur + `tests/test_pawn_structure.py` |
+| M6 | Model `puzzles.csv` / pengenalan pola taktis | Rencana (belum dikerjakan) |
 
 ## Catatan / utang teknis
 
-- `models/` hanya berisi `.gitkeep`; model harus dilatih ulang (`uv run python -m app.ml.train`).
+- `models/` hanya berisi `.gitkeep`; model harus dilatih ulang (`uv run python train.py`).
 - `datasets/` dan artifact model **tidak** di-commit karena ukurannya besar.
 - `halfmove_clock` dari frontend bisa selalu `0` (lihat PLANNING.md); fitur ini
   ada tapi tidak boleh diandalkan.
 - `fastapi.testclient` memunculkan `StarletteDeprecationWarning` soal `httpx`;
   belum berdampak, pantau saat upgrade.
-- Test `test_features.py` sudah mencakup fitur; loader `dataset.py` belum punya
-  test khusus.
+- Test `test_features.py` sudah mencakup fitur; `tests/test_pawn_structure.py`
+  mencakup pola pion. Loader dataset (streaming/sampling) di `app/ml.py` belum
+  punya test khusus.
+- `app/experiment.py` (utility non-produksi) untuk membandingkan set fitur &
+  algoritma: `uv run python -m app.experiment`. Hasilnya: fitur non-ply /
+  algoritma lain tidak mengubah label posisi OOD — akar masalah di definisi label.
 - **Temuan: label `phase` vs skakmat.** Model mengklasifikasi fase berdasarkan
   nomor langkah/material; skakmat bisa terjadi di fase mana pun, sehingga
   posisi skakmat tetap dapat berlabel `middlegame` (per definisi dataset).
@@ -185,9 +201,9 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 ## Aturan kerja agent
 
 - Gunakan `uv` untuk semua operasi dependency; jangan pakai `pip` langsung.
-- Jaga struktur modular: endpoint di `routes.py`, model di `classifier.py`,
-  fitur/label/data/training di `app/ml/`.
-- Jangan duplikasi logika ekstraksi fitur di luar `app/ml/features.py`.
+- Jaga struktur ringkas: endpoint + classifier di `app/api.py`, fitur/label/
+  data/training di `app/ml.py`.
+- Jangan duplikasi logika ekstraksi fitur di luar `app/ml.py`.
 - Jangan commit `datasets/`, `models/*.joblib`, atau `models/metrics.json`.
 - Setelah perubahan kode, jalankan `uv run pytest`.
 - Perubahan kontrak API harus diselaraskan dengan `PLANNING.md` di root repo.
