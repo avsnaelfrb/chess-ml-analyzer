@@ -4,6 +4,6 @@ Jalankan dengan:
     uv run uvicorn main:app --reload
 """
 
-from app.server import app
+from app.api import app
 
 __all__ = ["app"]
