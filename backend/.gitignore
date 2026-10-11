@@ -8,3 +8,13 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local data & model artifacts (besar, jangan di-commit)
+datasets/
+data/
+models/*.joblib
+models/metrics.json
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/

@@ -1,6 +1,9 @@
-def main():
-    print("Hello from backend!")
+"""Entrypoint ASGI.
 
+Jalankan dengan:
+    uv run uvicorn main:app --reload
+"""
 
-if __name__ == "__main__":
-    main()
+from app.api import app
+
+__all__ = ["app"]
