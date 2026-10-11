@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.ml.features import (
+from app.ml import (
     FEATURE_NAMES,
     FenFeatureExtractor,
     extract_features,
