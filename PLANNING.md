@@ -6,8 +6,10 @@ bagian. Setiap agent/anggota tim membaca ini lebih dulu sebelum bekerja.
 
 > **Status terakhir diperbarui:** Oktober 2026.
 > Ringkasan cepat: **kontrak API final, backend siap, dan integrasi klasifikasi
-> frontend sudah selesai**. Game catur di frontend kini mengirim FEN posisi
-> terkini ke backend dan menampilkan label fase + confidence.
+> frontend sudah selesai**. Backend baru saja dirapikan menjadi 2 modul inti
+> (`app/api.py` + `app/ml.py`), fitur pola struktur pion ditambahkan, dan seluruh
+> **25 test hijau**. `datasets/puzzles.csv` (1176 puzzle taktis berlabel tema)
+> tersedia sebagai bahan eksplorasi model berikutnya — belum dipakai.
 
 ## 1. Tujuan project
 
@@ -84,14 +86,17 @@ Aturan:
 | Game catur frontend | ✅ Selesai | Vue 3 + TS + Vite, pemain lokal, aturan langkah lengkap |
 | Integrasi klasifikasi frontend | ✅ Selesai | `src/api/classify.ts`, `AnalysisPanel`, proxy `/api` |
 | Endpoint backend (`/api/health`, `/api/classify`) | ✅ Selesai | FastAPI, kontrak sesuai bagian 3 |
-| Model klasifikasi | ✅ Baseline siap | `model.joblib` terlatih dari dataset |
-| Dataset | ✅ Tersedia | `datasets/moves.csv`, sudah berlabel `phase` |
-| Test backend | 🟡 Sebagian | 5 test API hijau; test fitur/dataset belum |
-| Dokumentasi | 🟡 Berjalan | `backend/AGENT.md`, `frontend/AGENT.md` |
+| Struktur backend | ✅ Dirapikan | 2 modul inti `app/api.py` + `app/ml.py`; entrypoint `train.py` |
+| Model klasifikasi | ✅ Latih ulang | +8 fitur pola struktur pion; akurasi test ~0.9999 |
+| Dataset | ✅ Tersedia | `moves.csv` (3,18 jt baris, berlabel `phase`) + `puzzles.csv` (eksplorasi, belum dipakai) |
+| Test backend | ✅ Hijau | 25 test: API (5), fitur (7), pola pion (8), perilaku model (5) |
+| Dokumentasi | ✅ Selaras | `backend/AGENT.md`, `frontend/AGENT.md`, `PLANNING.md` |
 
 **Implikasi:** integrasi frontend (bagian 7) sudah terpasang dan teruji
-end-to-end (health, classify, dan error `422` lewat proxy Vite). Sisa pekerjaan
-berada di sisi backend/ML (test fitur/dataset, laporan metrik) dan dataset.
+end-to-end (health, classify, dan error `422` lewat proxy Vite). Perombakan
+struktur backend **tidak mengubah kontrak API**, sehingga frontend tidak perlu
+penyesuaian. Sisa pekerjaan berada di sisi eksplorasi ML (mis. model berbasis
+`puzzles.csv` / pengenalan pola taktis).
 
 ## 5. Dataset
 
@@ -108,12 +113,21 @@ besar). Fakta utama:
 Catatan lintas tim: dataset ini bersifat **bahan latihan**, bukan skema data
 produk. Game di frontend tidak perlu menyamai kolom dataset.
 
+Selain itu tersedia `backend/datasets/puzzles.csv` (gitignored) — **1176 puzzle
+taktis berlabel tema** (`capture`/`check`/`mate`/`promotion`/dll., 7 kelas) plus
+`difficulty_score` dan `engine_best_eval_cp`. **Belum dipakai produksi**; ini
+kandidat eksplorasi model berikutnya. Ciri pentingnya: tema puzzle adalah sifat
+**taktis (gerakan)** sehingga fitur statis FEN yang ada sekarang tidak cukup —
+perlu fitur dinamis (legal moves, serangan). Hasil uji awal: klasifikasi tema
+~0.495 ≈ baseline, artinya perlu fitur baru, bukan sekadar ganti algoritma.
+
 ## 6. Pendekatan model
 
 - Model: scikit-learn `RandomForestClassifier` (`random_state=42`) di dalam
   `Pipeline` yang juga memuat ekstraksi fitur dari FEN.
-- Fitur: turunan FEN (material & jumlah bidak, jumlah tiap jenis bidak, giliran,
-  `ply`/`fullmove_number`, hak rokade, en passant).
+- Fitur: turunan FEN — material & jumlah bidak, jumlah tiap jenis bidak, pola
+  **struktur pion** (pion dobel, terisolasi, passed, pulau pion) per warna,
+  giliran, `ply`/`fullmove_number`, hak rokade, en passant.
 - **Anti-leakage:** evaluasi memakai split per `game_id` (baris satu game tidak
   terpecah ke train & test), plus metrik tambahan pada FEN unik.
 - Artifact: `backend/models/model.joblib` (gitignored), dimuat saat server start.
@@ -122,6 +136,12 @@ Hasil baseline (sampel 200k baris): akurasi test ~0.9999 vs baseline mayoritas
 ~0.537. Akurasi setinggi ini menandakan definisi `phase` pada dataset sangat
 deterministik (dominan nomor langkah + material) — **bukan** ukuran kecerdasan
 model. Perlu dijelaskan apa adanya saat melaporkan metrik.
+
+Catatan eksplorasi (sudah diuji): mengganti fitur (buang `ply`) atau algoritma
+(RF/HGB/LogReg) **tidak** mengubah label posisi OOD seperti K+Q mate di
+`fullmove 1` — masalahnya ada di **definisi label** `phase` yang berbasis
+nomor langkah, bukan di fitur/model. Mengubah perilaku itu berarti merelabel
+dataset (keputusan produk), di luar kontrak saat ini.
 
 ## 7. Tanggung jawab frontend
 
@@ -164,13 +184,11 @@ Struktur aktual (detail ada di `backend/AGENT.md`):
 ```
 backend/
 ├── main.py                 # entrypoint ASGI (uvicorn main:app)
+├── train.py                # entrypoint training model
 ├── app/
 │   ├── config.py           # path & setting (env CHESS_*)
-│   ├── schemas.py          # kontrak request/response
-│   ├── classifier.py       # muat model + predict
-│   ├── routes.py           # endpoint API
-│   ├── server.py           # app factory + CORS
-│   └── ml/                 # labeling, features, dataset, train
+│   ├── api.py              # skema + classifier + endpoint + app factory
+│   └── ml.py               # label + fitur FEN + dataset + training
 ├── models/                 # model.joblib + metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
 └── tests/
@@ -181,6 +199,9 @@ backend/
   `pandas`, `pytest`. Manajemen paket: `uv`.
 - Catatan Python: `.python-version` = 3.14; scikit-learn 1.9.1 sudah terbukti
   jalan di lingkungan ini.
+- Struktur sengaja **ringkas (2 modul inti)** agar alur mudah diikuti tanpa lompat
+  file: `app/api.py` = skema → classifier → endpoint → app factory; `app/ml.py` =
+  label → fitur → dataset → training. Entrypoint: `main.py` (server) & `train.py`.
 
 ## 9. Milestone
 
@@ -189,7 +210,10 @@ backend/
 | M0 | FEN generator + endpoint echo | Frontend kirim FEN, backend balas FEN sama | ✅ (digantikan classify nyata) |
 | M1 | Feature + labeling + train + model | `/api/classify` balas salah satu dari 3 label | ✅ |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | ✅ |
-| M3 | Test + evaluasi model | Test hijau, metrik dilaporkan | 🟡 test API hijau, metrik ada |
+| M3 | Test + evaluasi model | Test hijau, metrik dilaporkan | ✅ 25 test hijau; metrik ada |
+| M4 | Rapikan struktur backend | Sisi HTTP & ML jadi 2 modul inti | ✅ `app/api.py` + `app/ml.py` |
+| M5 | Fitur pola struktur pion | Fitur dobel/terisolasi/passed/pulau + test | ✅ 8 test khusus |
+| M6 | Model berbasis `puzzles.csv` / pengenalan pola taktis | Klasifikasi tema dengan fitur dinamis | 🔜 rencana (belum dikerjakan) |
 
 ## 10. Non-goals (MVP)
 
@@ -207,6 +231,9 @@ backend/
   tapi backend tidak boleh bergantung padanya.
 - **Interpretasi metrik:** akurasi tinggi berasal dari label yang deterministik;
   jangan diklaim sebagai bukti model "cerdas".
+- **Fitur/algoritma tak bisa mengalahkan label.** Posisi OOD (mis. K+Q mate di
+  `fullmove 1`) tetap `middlegame` walau fitur `ply` dibuang atau algoritma
+  diganti — akar masalahnya definisi `phase` berbasis nomor langkah (lihat bagian 6).
 - **Kontrak API beku:** perubahan bentuk request/response harus disepakati
   bersama dan diperbarui di dokumen ini.
 
@@ -218,7 +245,7 @@ Backend (model sudah tersedia):
 cd backend
 uv sync
 uv run uvicorn main:app --reload        # http://localhost:8000
-uv run python -m app.ml.train           # latih ulang bila perlu
+uv run python train.py                    # latih ulang bila perlu
 uv run pytest
 ```
 
