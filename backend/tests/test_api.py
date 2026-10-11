@@ -6,9 +6,8 @@ from fastapi.testclient import TestClient
 from sklearn.dummy import DummyClassifier
 from sklearn.pipeline import Pipeline
 
-from app.classifier import PhaseClassifier
-from app.ml.features import FenFeatureExtractor
-from app.server import create_app
+from app.api import PhaseClassifier, create_app
+from app.ml import FenFeatureExtractor
 
 START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 MID_FEN = "rnbqkbnr/pp2p1pp/2p2p2/3p4/3P1B2/5N2/PPP1PPPP/RN1QKB1R w KQkq - 0 4"
