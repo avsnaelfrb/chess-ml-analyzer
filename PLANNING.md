@@ -6,13 +6,14 @@ bagian. Setiap agent/anggota tim membaca ini lebih dulu sebelum bekerja.
 
 > **Status terakhir diperbarui:** Oktober 2026.
 > Ringkasan cepat: kontrak `/api/classify` (klasifikasi **fase**) sudah **beku**
-> dan terintegrasi di frontend — jangan diubah. Arah baru: menambah **tugas
-> kedua**, yaitu **analisis langkah** (kualitas langkah), sebagai **endpoint &
-> model terpisah**. Ini menuntut frontend mulai mengirim **`fen_before` +
-> langkah (UCI)**, bukan hanya satu FEN.
+> dan terintegrasi di frontend — jangan diubah. Tugas kedua, **analisis langkah**
+> (`POST /api/analyze-move`, input `fen_before` + langkah UCI), **sudah jalan**:
+> backend memakai engine UCI **Stockfish** untuk menghitung centipawn loss lalu
+> memetakannya ke `Good/Inaccuracy/Mistake/Blunder`. Frontend sudah mengirim
+> `fen_before` + `move_uci` dan menampilkan hasilnya.
 >
 > Legenda status: 🔒 **Beku** (jangan diubah tanpa kesepakatan) · ✅ **Selesai** ·
-> 🔜 **Rencana** (belum dikerjakan, kontrak masih dapat berubah).
+> 🔜 **Rencana** (belum dikerjakan).
 
 ## 1. Tujuan project
 
@@ -23,8 +24,9 @@ Dua tugas yang disepakati:
 
 1. **Fase permainan** (sudah jalan, beku) — input **FEN** → `opening` /
    `middlegame` / `endgame`.
-2. **Analisis langkah** (rencana) — input **`fen_before` + langkah** → kualitas
-   langkah (blunder/mistake/…). Endpoint **baru**, tidak menggantikan yang lama.
+2. **Analisis langkah** (sudah jalan) — input **`fen_before` + langkah (UCI)** →
+   kualitas langkah (Good/Inaccuracy/Mistake/Blunder) lewat engine Stockfish.
+   Endpoint **baru**, tidak menggantikan yang lama.
 
 Flow saat ini (fase):
 
@@ -32,7 +34,7 @@ Flow saat ini (fase):
 [Papan frontend] ──FEN──▶ POST /api/classify ──▶ [Backend + model] ──▶ {label, confidence} ──▶ ditampilkan
 ```
 
-Flow yang direncanakan (analisis langkah):
+Flow analisis langkah (sudah jalan):
 
 ```
 [Papan frontend] ──{fen_before, move_uci}──▶ POST /api/analyze-move ──▶ [Backend + model] ──▶ {quality, ...} ──▶ ditampilkan
@@ -94,13 +96,13 @@ Aturan:
 - CORS mengizinkan origin dev frontend (`http://localhost:5173`,
   `http://127.0.0.1:5173`). Proxy Vite tetap dipakai saat dev.
 
-## 4. Kontrak API — ANALISIS LANGKAH 🔜 RENCANA
+## 4. Kontrak API — ANALISIS LANGKAH ✅ SUDAH JALAN (engine)
 
-**Belum diimplementasikan.** Bentuk di bawah adalah usulan agar frontend bisa
-mulai menyiapkan pengiriman. Nama endpoint & bentuk respons **dapat berubah**
-sebelum disepakati final.
+Dihitung engine UCI **Stockfish** (bukan model ML). Engine menilai skor posisi
+sebelum langkah (langkah terbaik) dan skor setelah langkah dimainkan — keduanya
+dari sudut pandang pemain yang melangkah; selisihnya = `cp_loss`.
 
-### `POST /api/analyze-move` (usulan nama)
+### `POST /api/analyze-move`
 
 Request (JSON):
 
@@ -111,31 +113,32 @@ Request (JSON):
 }
 ```
 
-- `fen_before`: posisi **sebelum** langkah dimainkan (6 field FEN standar).
-- `move_uci`: langkah dalam notasi UCI — petak asal + petak tujuan, huruf kecil
-  semua; tambahkan huruf promosi bila perlu (`e7e8q`, `a2a1n`).
+- `fen_before`: posisi **sebelum** langkah (6 field FEN; harus posisi **legal**).
+- `move_uci`: langkah dalam notasi UCI — huruf kecil semua; tambahkan huruf
+  promosi bila perlu (`e7e8q`, `b7b8n`).
 
-Response `200` (usulan, masih dapat berubah):
+Response `200`:
 
 ```json
 {
   "quality": "Inaccuracy",
-  "cp_loss": 120,
-  "probabilities": { "Good": 0.31, "Inaccuracy": 0.52, "Mistake": 0.12, "Blunder": 0.05 },
-  "model_version": "0.2.0"
+  "cp_loss": 120.0,
+  "probabilities": { "Good": 0.0, "Inaccuracy": 1.0, "Mistake": 0.0, "Blunder": 0.0 },
+  "model_version": "Stockfish 19"
 }
 ```
 
-Aturan yang direncanakan (meniru gaya `/api/classify`):
+Aturan:
 
-- `quality` salah satu `Good` | `Inaccuracy` | `Mistake` | `Blunder`.
-- `cp_loss` = kerugian centipawn (integer); `null` bila langkah = engine best.
-- `fen_before` atau `move_uci` tidak valid → `422` `{ "detail": "..." }`.
-- Model belum tersedia → `503` `{ "detail": "..." }`.
-
-> Catatan keputusan yang belum diambil: apakah output utama berupa
-> **klasifikasi** (4 kelas di atas) atau **regresi** `cp_loss`, atau keduanya.
-> `quality` dapat diturunkan dari ambang `cp_loss` bila dipilih regresi.
+- `quality` salah satu `Good` | `Inaccuracy` | `Mistake` | `Blunder`, hasil ambang
+  `cp_loss`: `<50` Good, `50–99` Inaccuracy, `100–199` Mistake, `≥200` Blunder
+  (sama persis dengan definisi kolom `move_quality` di dataset).
+- `cp_loss` = kerugian centipawn (`>= 0`), dihitung engine.
+- `probabilities` bersifat **deterministik satu-panas** (engine memberi satu
+  kelas pasti), bukan distribusi statistik.
+- `model_version` = nama engine (mis. `"Stockfish 19"`).
+- `fen_before` tidak valid / posisi ilegal / langkah ilegal → `422` `{ "detail": "..." }`.
+- Engine belum tersedia (biner hilang) → `503` `{ "detail": "..." }`.
 
 ## 5. Status terkini
 
@@ -147,13 +150,13 @@ Aturan yang direncanakan (meniru gaya `/api/classify`):
 | Struktur backend | ✅ Dirapikan | 2 modul inti `app/api.py` + `app/ml.py`; entrypoint `train.py` |
 | Model fase | ✅ Latih ulang | +8 fitur pola struktur pion; akurasi test ~0.9999 |
 | Dataset | ✅ Tersedia | `moves.csv` (3,18 jt baris) + `puzzles.csv` (1.176 baris) |
-| Test backend | ✅ Hijau | 25 test (API 5, fitur 7, pola pion 8, perilaku model 5) |
+| Test backend | ✅ Hijau | 31 test (API 5, fitur 7, pola pion 8, perilaku model 5, analisis langkah 6) |
 | Katalog label (dua dataset) | ✅ Terdokumentasi | Bagian 7 |
-| Endpoint + model analisis langkah | 🔜 Rencana | Butuh input `fen_before` + `move_uci` (bagian 4 & 9) |
+| Analisis langkah (`/api/analyze-move`) | ✅ Selesai (engine) | Stockfish; kontrak di bagian 4 |
 
-**Implikasi untuk frontend:** integrasi fase tidak berubah. Yang perlu disiapkan
-adalah **mengirim `fen_before` + langkah (UCI)** agar endpoint analisis langkah
-bisa dibangun (bagian 9). Belum ada yang rusak bila belum dikerjakan.
+**Implikasi untuk frontend:** integrasi fase tidak berubah. Frontend sudah
+mengirim **`fen_before` + `move_uci`** dan menampilkan hasil analisis langkah
+(bagian 9b) — end-to-end sudah jalan.
 
 ## 6. Dataset
 
@@ -251,11 +254,10 @@ Catatan FEN dari state `useChess`: 6 field standar; `halfmove_clock` selalu `0`
 FEN awal wajib `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`.
 Base URL default relatif (`/api`); override dengan `VITE_API_BASE`.
 
-### 9b. Analisis langkah 🔜 RENCANA (yang perlu disiapkan frontend)
+### 9b. Analisis langkah ✅ sudah diimplementasikan
 
-Tujuan: saat sebuah langkah dimainkan, frontend dapat mengirim **posisi sebelum
-langkah** + **langkah itu** ke endpoint baru (bagian 4). Data ini **sudah ada** di
-state frontend; hanya belum dikirim.
+Saat sebuah langkah dimainkan, frontend mengirim **posisi sebelum langkah** +
+**langkah itu** ke `POST /api/analyze-move` (bagian 4).
 
 Yang dibutuhkan:
 
@@ -276,8 +278,6 @@ Penting:
 - **Jangan kirim `fen` (sesudah langkah)** untuk tugas ini; yang dibutuhkan
   `fen_before`. `fen` yang ada sekarang = posisi **sesudah** langkah.
 - **Jangan mengubah alur `/api/classify`** yang sudah jalan.
-- Endpoint analisis langkah belum ada; frontend boleh menyiapkan pengiriman
-  lebih dulu tanpa menunggu backend.
 
 ## 10. Tanggung jawab backend
 
@@ -313,7 +313,7 @@ backend/
 | M4 | Rapikan struktur backend | 2 modul inti (`app/api.py` + `app/ml.py`) | ✅ |
 | M5 | Fitur pola struktur pion | 8 fitur + 8 test | ✅ |
 | M6 | Katalog label dari dua dataset | Bagian 7 dokumen ini | ✅ |
-| M7 | Endpoint + model analisis langkah | `{fen_before, move_uci}` → kualitas langkah | 🔜 rencana |
+| M7 | Endpoint analisis langkah (engine Stockfish) | `{fen_before, move_uci}` → kualitas langkah | ✅ |
 | M8 | Model tema taktis (`puzzles.csv`) | Klasifikasi tema dengan fitur dinamis | 🔜 rencana |
 
 ## 12. Non-goals (MVP)
@@ -329,17 +329,21 @@ backend/
 
 - **State vs action.** Jangan menganggap FEN cukup untuk menilai langkah; lihat
   bagian 2. `fen_before` + `move_uci` wajib.
-- **Ketimpangan kelas.** `move_quality` ~99,4% `Good`; jangan melatih kelas apa
-  adanya tanpa penanganan (penyeimbangan/ambang). `promotion`, `is_forcing`
-  kecil juga.
+- **`move_quality` timpang (99,35% Good)** dan hanya ambang dari `cp_loss` →
+  kualitas langkah **tidak** dilatih sebagai model ML, melainkan dihitung engine
+  (Stockfish). Jangan menggantinya dengan classifier — baseline "selalu Good"
+  saja sudah 99,35%.
+- **Analisis langkah butuh biner engine.** `backend/bin/stockfish` tidak
+  di-commit; tanpa itu endpoint membalas `503`. Arahkan lewat
+  `CHESS_STOCKFISH_PATH`.
+- **Probabilitas analisis langkah deterministik** (satu-panas), bukan keyakinan
+  statistik — jangan ditampilkan sebagai "confidence model".
 - **Data puzzle kecil** (1.176 baris); jangan berharap model besar.
 - **Duplikasi FEN antar-game** membuat metrik optimistis; tetap pakai evaluasi
   dedup FEN.
 - **`halfmove_clock` selalu `0`**; jangan jadikan fitur yang diandalkan.
 - **Kontrak fase beku:** perubahan `/api/classify` harus disepakati dan
   diperbarui di dokumen ini dulu.
-- **Endpoint analisis langkah masih rencana:** bentuk request/response dapat
-  berubah sebelum final (bagian 4).
 
 ## 14. Cara menjalankan (dev)
 
@@ -352,6 +356,12 @@ uv run uvicorn main:app --reload        # http://localhost:8000
 uv run python train.py                   # latih ulang bila perlu
 uv run pytest
 ```
+
+Engine analisis langkah: taruh biner Stockfish di `backend/bin/stockfish`
+(atau set `CHESS_STOCKFISH_PATH` ke biner/sistem). Unduhan resmi:
+`github.com/official-stockfish/Stockfish/releases/latest` →
+`stockfish-linux-x86-64-universal.tar.gz`. Tanpa biner, `/api/analyze-move`
+membalas `503` (bagian 4).
 
 Frontend:
 
