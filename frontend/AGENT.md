@@ -11,7 +11,7 @@ Frontend ini adalah web game catur sederhana untuk dua pemain lokal yang menjadi
 - Package manager: Deno 2 (`deno.lock` menjadi lockfile utama)
 - Mode permainan: dua pemain lokal pada satu perangkat
 - Fitur permainan: gerakan legal, giliran, skak, skakmat, remis, rokade, en passant, promosi pion, undo, reset, dan riwayat langkah
-- Integrasi backend: kirim FEN ke `POST /api/classify` dan tampilkan label fase + confidence
+- Integrasi backend: kirim FEN ke `POST /api/classify` (fase) dan analisis langkah ke `POST /api/analyze-move` (fen_before + move_uci)
 - Gaya visual: modern minimalis, tema gelap dengan aksen hijau limau
 
 ## Struktur saat ini
@@ -35,7 +35,7 @@ frontend/
     ├── App.vue               # Shell layout; merangkai komponen dan composable
     ├── style.css             # Tema, layout, papan, panel analisis, responsivitas, dan modal promosi
     ├── api/
-    │   └── classify.ts       # Client fetch ke POST /api/classify + tipe respons
+    │   └── classify.ts       # Client fetch ke POST /api/classify & POST /api/analyze-move + tipe respons
     ├── types/
     │   └── chess.ts          # Tipe domain: Color, Piece, Move, Castling, Snapshot
     ├── lib/chess/
@@ -45,12 +45,12 @@ frontend/
     │   ├── fen.ts            # Bangun FEN dari state papan + INITIAL_FEN
     │   └── engine.ts         # Aturan catur murni: pseudoMoves, applyMove, skak, langkah legal
     ├── composables/
-    │   └── useChess.ts       # State reaktif permainan + aksi + computed fen
+    │   └── useChess.ts       # State reaktif permainan + aksi + computed fen + lastMoveInfo (fen_before, move_uci)
     └── components/
         ├── ChessBoard.vue    # Grid papan, bidak, sorotan, dan label
         ├── PlayerCard.vue    # Kartu pemain dan indikator giliran
         ├── StatusPanel.vue   # Status permainan (skak/skakmat/remis)
-        ├── AnalysisPanel.vue # Tombol analisis fase + hasil dari API klasifikasi
+        ├── AnalysisPanel.vue # Analisis fase (FEN) + analisis langkah terakhir (fen_before+move_uci)
         ├── MoveHistory.vue   # Riwayat langkah
         ├── GameControls.vue  # Tombol undo dan reset
         └── PromotionModal.vue # Modal pemilihan bidak promosi
@@ -93,32 +93,31 @@ deno task preview
 
 Task di atas didefinisikan di `deno.json` dan memetakan script yang sama di `package.json` (`npm run dev`, `npm run build`, `npm run preview`). `vite` dijalankan langsung sebagai task Deno, sedangkan `vue-tsc` dijalankan lewat `node` karena patch SFC-nya tidak kompatibel dengan runtime Deno.
 
-## Integrasi API klasifikasi
+## Integrasi API
 
+### Klasifikasi fase (baku)
 - Kontrak beku ada di `PLANNING.md` bagian 3: `POST /api/classify` menerima `{ "fen": "..." }` dan mengembalikan `{ label, confidence, probabilities, model_version }`; error berbentuk `{ "detail": "..." }` (FEN invalid `422`, model belum ada `503`).
 - Base URL default memakai path relatif `/api`; saat dev, `vite.config.ts` mem-proxy `/api` ke `http://localhost:8000` sehingga tidak perlu CORS.
 - Bila ingin menembak backend tanpa proxy, set environment `VITE_API_BASE` (mis. `http://localhost:8000`).
 - FEN dibangun di `src/lib/chess/fen.ts` dan diekspos sebagai `fen` computed dari `useChess`; `halfmove_clock` selalu `0` dan `fullmove_number = floor(ply / 2) + 1`.
 - `AnalysisPanel.vue` menerima prop `fen`, memanggil `classifyFen`, dan menangani state idle / loading / sukses / error. Hasil direset ketika posisi berubah.
 
+### Analisis langkah (rencana, sudah terimplementasi minimal)
+- Endpoint baru: `POST /api/analyze-move` menerima `{ "fen_before": "...", "move_uci": "..." }` (lihat `PLANNING.md` bagian 4).
+- Respons usulan: `{ quality: "Good"|"Inaccuracy"|"Mistake"|"Blunder", cp_loss: number|null, probabilities: {...}, model_version: "0.2.0" }`.
+- `useChess.makeMove` menyimpan `lastMoveInfo = { fenBefore: fen.value (sebelum apply), moveUci: from+to + promo(q/r/b/n bila ada) }`. `undo()` dan `reset()` mengosongkannya.
+- `App.vue` meneruskan `lastMoveInfo` ke `AnalysisPanel.vue` sebagai prop `lastMove`.
+- `AnalysisPanel.vue` menampilkan tombol "Analisis langkah terakhir" (aktif bila ada langkah terakhir) dan menampilkan hasil `analyzeMove`. Hasil direset saat posisi/terakhir berubah.
+
 ## Perubahan backend yang perlu diketahui
 
-Per Oktober 2026, struktur internal backend dirapikan **(tanpa mengubah kontrak
-API)**. Frontend **tidak perlu penyesuaian apa pun** karena endpoint, bentuk
-respons, CORS, dan proxy Vite tetap sama.
+Per Oktober 2026, backend menambah endpoint baru `POST /api/analyze-move` sesuai rencana `PLANNING.md` (bagian 4). Kontrak klasifikasi fase (`/api/classify`) tetap **beku**.
 
-- Sisi HTTP backend digabung ke `backend/app/api.py` (skema + classifier +
-  endpoint + app factory).
-- Sisi ML digabung ke `backend/app/ml.py` (label + fitur FEN + dataset + training).
-- Entrypoint training kini `uv run python train.py` dari folder `backend/`
-  (sebelumnya `python -m app.ml.train`).
-- Model ditambah fitur pola struktur pion, tetapi **input/response API tidak
-  berubah**: `{ "fen": "..." }` → `{ label, confidence, probabilities, model_version }`.
-- Endpoint & error tetap: `GET /api/health`, `POST /api/classify`
-  (`422` FEN invalid, `503` model belum ada).
+- `app/api.py`: tambah skema `AnalyzeMoveRequest/Response`, validasi `fen_before` + `move_uci` (legal move via `python-chess`), endpoint `/api/analyze-move`.
+- `app/config.py`: tambah `MOVE_ANALYSIS_MODEL_VERSION` (default `0.2.0`).
+- Endpoint & error: `GET /api/health`, `POST /api/classify` (`422` invalid, `503` model belum ada), `POST /api/analyze-move` (`422` invalid/illegal move).
 
-Dampak ke frontend: **nihil**. Selama backend jalan
-(`uv run uvicorn main:app --reload`), proxy `/api` tetap berfungsi seperti semula.
+Dampak ke frontend: minimal — frontend sudah menambahkan client + UI untuk menganalisis langkah terakhir (lihat bagian Integrasi API). Selama backend jalan (`uv run uvicorn main:app --reload`), proxy `/api` tetap berfungsi.
 
 ## Catatan implementasi
 
