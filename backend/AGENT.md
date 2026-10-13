@@ -2,12 +2,14 @@
 
 ## Ringkasan proyek
 
-Backend ini adalah API + model **klasifikasi fase permainan catur** langsung dari
-satu string FEN. Kontraknya mengikuti `PLANNING.md` di root repo.
+Backend ini adalah API untuk dua tugas: **klasifikasi fase** permainan catur dari
+satu string FEN, dan **analisis kualitas langkah** dari `fen_before` + langkah UCI
+(memakai engine Stockfish). Keduanya mengikuti `PLANNING.md` di root repo.
 
 - Bahasa: Python 3.14 (lihat `.python-version`)
 - Framework API: FastAPI + uvicorn
-- Model: scikit-learn `RandomForestClassifier` di dalam `Pipeline`
+- Model fase: scikit-learn `RandomForestClassifier` di dalam `Pipeline`
+- Analisis langkah: engine UCI **Stockfish** (bukan model ML), biner di `bin/`
 - Package manager: `uv` (`pyproject.toml` + `uv.lock`)
 - Target kelas: `opening` | `middlegame` | `endgame`
 - Input model: **FEN saja**
@@ -30,8 +32,10 @@ backend/
 ├── app/
 │   ├── __init__.py
 │   ├── config.py           # Path & setting (env CHESS_*)
-│   ├── api.py              # Skema + classifier + endpoint + app factory (satu modul)
+│   ├── api.py              # Skema + classifier fase + MoveAnalyzer (engine) + endpoint + app factory
 │   └── ml.py               # Label + fitur FEN + loader dataset + training (satu modul)
+├── bin/
+│   └── stockfish           # Biner engine UCI (gitignored, unduh sendiri)
 ├── models/
 │   └── .gitkeep            # model.joblib & metrics.json (gitignored)
 ├── datasets/
@@ -41,6 +45,7 @@ backend/
     ├── test_api.py             # Test endpoint API (5 test)
     ├── test_features.py        # Test ekstraksi fitur FEN (7 test)
     ├── test_pawn_structure.py  # Test pola struktur pion (8 test)
+    ├── test_move_analysis.py   # Test endpoint analisis langkah / ambang (6 test)
     └── test_model_behavior.py  # Karakterisasi model di posisi skakmat (5 test)
 ```
 
@@ -56,6 +61,7 @@ Base URL dev: `http://localhost:8000`.
 |---|---|---|
 | `GET /api/health` | `200 {"status":"ok"}` | — |
 | `POST /api/classify` | `200` (lihat bawah) | `422` FEN invalid / body salah, `503` model belum ada |
+| `POST /api/analyze-move` | `200` (lihat bawah) | `422` FEN/posisi/langkah tidak valid, `503` engine belum ada |
 
 Respons `/api/classify`:
 
@@ -73,6 +79,31 @@ Respons `/api/classify`:
 - `probabilities` selalu memuat ketiga kelas (kelas yang hilang diisi `0.0`).
 - CORS mengizinkan `http://localhost:5173` & `http://127.0.0.1:5173`
   (bisa diubah lewat env `CHESS_CORS_ORIGINS`).
+
+## Analisis langkah (endpoint kedua, engine Stockfish)
+
+`POST /api/analyze-move` menilai kualitas satu langkah.
+
+```json
+// Request
+{ "fen_before": "...", "move_uci": "d2d4" }
+// Respons 200
+{ "quality": "Good", "cp_loss": 8.0,
+  "probabilities": { "Good": 1.0, "Inaccuracy": 0.0, "Mistake": 0.0, "Blunder": 0.0 },
+  "model_version": "Stockfish 19" }
+```
+
+- Alur: `MoveAnalyzer.analyze(fen_before, move_uci)` memvalidasi FEN + legalitas
+  langkah, lalu membandingkan skor engine (depth `CHESS_ENGINE_DEPTH`, default 12)
+  sebelum vs sesudah langkah — keduanya dari sudut pandang pemain yang melangkah.
+  Selisih = `cp_loss`; ambang `50/100/200` memetakannya ke
+  `Good/Inaccuracy/Mistake/Blunder` (sama dengan definisi `move_quality` dataset).
+- `probabilities` **deterministik satu-panas** (dari engine, bukan classifier).
+- Posisi ilegal (mis. pihak yang tidak jalan sedang diskak) ditolak `422`
+  **sebelum** ke engine — engine UCI menolak posisi seperti itu dan bisa mati.
+- Biner default `bin/stockfish`; ubah lewat env `CHESS_STOCKFISH_PATH`. Engine
+  dijalankan **malas** (saat analisis pertama) dan dimatikan saat shutdown.
+  Tanpa biner → `503` (server tetap hidup).
 
 ## Alur prediksi (FEN -> label)
 
@@ -170,10 +201,11 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 | M0 | FEN generator + endpoint echo | Selesai (digantikan endpoint classify nyata) |
 | M1 | Feature + labeling + train + model | Selesai |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Selesai (frontend sudah terpasang) |
-| M3 | Test + evaluasi model | 25 test hijau (API/fitur/pola pion/perilaku); metrik dilaporkan |
+| M3 | Test + evaluasi model | 31 test hijau (API/fitur/pola pion/perilaku/analisis langkah); metrik dilaporkan |
 | M4 | Rapikan struktur backend | Selesai: 2 modul inti (`app/api.py` + `app/ml.py`), entrypoint `train.py` |
 | M5 | Fitur pola struktur pion | Selesai: 8 fitur + `tests/test_pawn_structure.py` |
-| M6 | Model `puzzles.csv` / pengenalan pola taktis | Rencana (belum dikerjakan) |
+| M6 | Analisis langkah (engine Stockfish) | Selesai: `/api/analyze-move` + `tests/test_move_analysis.py` |
+| M7 | Model `puzzles.csv` / pengenalan pola taktis | Rencana (belum dikerjakan) |
 
 ## Catatan / utang teknis
 
@@ -204,6 +236,7 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 - Jaga struktur ringkas: endpoint + classifier di `app/api.py`, fitur/label/
   data/training di `app/ml.py`.
 - Jangan duplikasi logika ekstraksi fitur di luar `app/ml.py`.
-- Jangan commit `datasets/`, `models/*.joblib`, atau `models/metrics.json`.
+- Jangan commit `datasets/`, `models/*.joblib`, `models/metrics.json`, atau `bin/`
+  (biner engine).
 - Setelah perubahan kode, jalankan `uv run pytest`.
 - Perubahan kontrak API harus diselaraskan dengan `PLANNING.md` di root repo.
