@@ -19,6 +19,12 @@ MODEL_PATH = Path(os.getenv("CHESS_MODEL", MODELS_DIR / "model.joblib"))
 METRICS_PATH = Path(os.getenv("CHESS_METRICS", MODELS_DIR / "metrics.json"))
 
 MODEL_VERSION = os.getenv("CHESS_MODEL_VERSION", "0.1.0")
+MOVE_ANALYSIS_MODEL_VERSION = os.getenv("CHESS_MOVE_ANALYSIS_MODEL_VERSION", "0.2.0")
+
+# Engine UCI untuk analisis langkah. Default: biner lokal di backend/bin/.
+# Bisa diarahkan ke Stockfish sistem lewat CHESS_STOCKFISH_PATH (mis. "stockfish").
+STOCKFISH_PATH = os.getenv("CHESS_STOCKFISH_PATH", str(BASE_DIR / "bin" / "stockfish"))
+ENGINE_DEPTH = int(os.getenv("CHESS_ENGINE_DEPTH", "12"))
 
 # Origin dev frontend (Vite). Dipisah koma kalau mau menambah origin lain.
 CORS_ORIGINS = [
