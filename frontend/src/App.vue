@@ -21,6 +21,7 @@ const {
   history,
   moves,
   promotion,
+  lastMoveInfo,
   choose,
   makeMove,
   undo,
@@ -56,7 +57,7 @@ function promote(kind: Kind) {
       </div>
       <aside class="side-panel">
         <StatusPanel :status="status" :game-over="gameOver" :checked="checked" />
-        <AnalysisPanel :fen="fen" />
+        <AnalysisPanel :fen="fen" :last-move="lastMoveInfo" />
         <MoveHistory :moves="moves" />
         <GameControls :can-undo="history.length > 0" @undo="undo" @reset="reset" />
         <p class="tip"><span>✦</span> Klik bidak lalu pilih kotak yang disorot untuk bergerak.</p>
