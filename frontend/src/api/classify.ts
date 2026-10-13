@@ -1,4 +1,5 @@
 export type PhaseLabel = 'opening' | 'middlegame' | 'endgame'
+export type MoveQuality = 'Good' | 'Inaccuracy' | 'Mistake' | 'Blunder'
 
 export type ClassifyResponse = {
   label: PhaseLabel
@@ -7,14 +8,28 @@ export type ClassifyResponse = {
   model_version: string
 }
 
-/** Error dari lapisan klasifikasi, membawa status HTTP (0 untuk kegagalan jaringan). */
-export class ClassifyError extends Error {
+export type AnalyzeMoveResponse = {
+  quality: MoveQuality
+  cp_loss: number | null
+  probabilities: Record<MoveQuality, number>
+  model_version: string
+}
+
+/** Error dari lapisan API, membawa status HTTP (0 untuk kegagalan jaringan). */
+export class ApiError extends Error {
   readonly status: number
 
   constructor(message: string, status: number) {
     super(message)
-    this.name = 'ClassifyError'
+    this.name = 'ApiError'
     this.status = status
+  }
+}
+
+export class ClassifyError extends ApiError {
+  constructor(message: string, status: number) {
+    super(message, status)
+    this.name = 'ClassifyError'
   }
 }
 
@@ -52,4 +67,29 @@ export async function classifyFen(fen: string, signal?: AbortSignal): Promise<Cl
   }
 
   return (await response.json()) as ClassifyResponse
+}
+
+export async function analyzeMove(
+  fenBefore: string,
+  moveUci: string,
+  signal?: AbortSignal,
+): Promise<AnalyzeMoveResponse> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/api/analyze-move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen_before: fenBefore, move_uci: moveUci }),
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('Tidak dapat terhubung ke server analisis.', 0)
+  }
+
+  if (!response.ok) {
+    throw new ApiError(await readDetail(response), response.status)
+  }
+
+  return (await response.json()) as AnalyzeMoveResponse
 }
