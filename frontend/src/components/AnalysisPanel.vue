@@ -1,8 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { classifyFen, ClassifyError, type ClassifyResponse, type PhaseLabel } from '../api/classify'
+import {
+  analyzeMove,
+  ApiError,
+  ClassifyError,
+  classifyFen,
+  type AnalyzeMoveResponse,
+  type ClassifyResponse,
+  type MoveQuality,
+  type PhaseLabel,
+} from '../api/classify'
 
-const props = defineProps<{ fen: string }>()
+const props = defineProps<{
+  fen: string
+  lastMove?: { fenBefore: string; moveUci: string } | null
+}>()
 
 const PHASE_NAMES: Record<PhaseLabel, string> = {
   opening: 'Pembukaan',
@@ -10,10 +22,21 @@ const PHASE_NAMES: Record<PhaseLabel, string> = {
   endgame: 'Akhir Permainan',
 }
 
+const QUALITY_NAMES: Record<MoveQuality, string> = {
+  Good: 'Good',
+  Inaccuracy: 'Inaccuracy',
+  Mistake: 'Mistake',
+  Blunder: 'Blunder',
+}
+
 const loading = ref(false)
 const result = ref<ClassifyResponse | null>(null)
 const error = ref<string | null>(null)
+const moveResult = ref<AnalyzeMoveResponse | null>(null)
+const moveError = ref<string | null>(null)
+const moveLoading = ref(false)
 let controller: AbortController | null = null
+let moveController: AbortController | null = null
 
 const confidencePercent = computed(() =>
   result.value ? Math.round(result.value.confidence * 100) : 0,
@@ -27,6 +50,18 @@ const probabilityRows = computed(() => {
     name: PHASE_NAMES[key],
     percent: Math.round(probabilities[key] * 100),
   }))
+})
+
+const moveQualityPercent = computed(() => {
+  if (!moveResult.value) return 0
+  return Math.round(moveResult.value.probabilities[moveResult.value.quality] * 100)
+})
+
+const moveProbabilityRows = computed(() => {
+  if (!moveResult.value) return []
+  const probs = moveResult.value.probabilities
+  const keys: MoveQuality[] = ['Good', 'Inaccuracy', 'Mistake', 'Blunder']
+  return keys.map((k) => ({ key: k, name: QUALITY_NAMES[k], percent: Math.round(probs[k] * 100) }))
 })
 
 async function analyze() {
@@ -50,6 +85,28 @@ async function analyze() {
   }
 }
 
+async function analyzeLastMove() {
+  if (!props.lastMove) return
+  moveController?.abort()
+  const current = new AbortController()
+  moveController = current
+  moveLoading.value = true
+  moveError.value = null
+
+  try {
+    moveResult.value = await analyzeMove(props.lastMove.fenBefore, props.lastMove.moveUci, current.signal)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return
+    moveResult.value = null
+    moveError.value = err instanceof ApiError ? err.message : 'Terjadi kesalahan tak terduga.'
+  } finally {
+    if (moveController === current) {
+      moveLoading.value = false
+      moveController = null
+    }
+  }
+}
+
 // Hasil lama tidak relevan setelah posisi berubah.
 watch(
   () => props.fen,
@@ -62,7 +119,22 @@ watch(
   },
 )
 
-onBeforeUnmount(() => controller?.abort())
+watch(
+  () => props.lastMove,
+  () => {
+    moveController?.abort()
+    moveController = null
+    moveLoading.value = false
+    moveResult.value = null
+    moveError.value = null
+  },
+  { deep: true },
+)
+
+onBeforeUnmount(() => {
+  controller?.abort()
+  moveController?.abort()
+})
 </script>
 
 <template>
@@ -92,6 +164,39 @@ onBeforeUnmount(() => controller?.abort())
         </div>
       </div>
       <p class="model-version">model v{{ result.model_version }}</p>
+    </div>
+
+    <div class="section-head" style="margin-top: 1.5rem">
+      <h2>Analisis langkah terakhir</h2>
+      <span>MOVE</span>
+    </div>
+    <p class="analysis-desc">Analisis kualitas langkah yang baru dimainkan.</p>
+
+    <button
+      class="analysis-button"
+      :disabled="!props.lastMove || moveLoading"
+      @click="analyzeLastMove"
+    >
+      {{ moveLoading ? 'Menganalisis…' : 'Analisis langkah terakhir' }}
+    </button>
+
+    <div v-if="moveError" class="analysis-error">{{ moveError }}</div>
+
+    <div v-else-if="moveResult" class="analysis-result">
+      <div class="phase-label">
+        <span>{{ QUALITY_NAMES[moveResult.quality] }}</span>
+        <b>{{ moveQualityPercent }}%</b>
+      </div>
+      <div class="prob-list">
+        <div v-for="row in moveProbabilityRows" :key="row.key" class="prob-row">
+          <span class="prob-name">{{ row.name }}</span>
+          <span class="prob-bar"><i :style="{ width: row.percent + '%' }"></i></span>
+          <span class="prob-value">{{ row.percent }}%</span>
+        </div>
+      </div>
+      <p class="model-version">
+        model v{{ moveResult.model_version }}{{ moveResult.cp_loss !== null ? ` • cp_loss: ${moveResult.cp_loss}` : '' }}
+      </p>
     </div>
   </div>
 </template>
