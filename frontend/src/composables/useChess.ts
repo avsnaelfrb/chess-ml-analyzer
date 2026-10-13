@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { cloneBoard, createBoard, initialCastling } from '../lib/chess/board'
 import { allLegal, applyMove, inCheck, legalMoves, opposite, type Position } from '../lib/chess/engine'
 import { toFen } from '../lib/chess/fen'
-import { colorName, moveNotation } from '../lib/chess/notation'
+import { colorName, moveNotation, squareName } from '../lib/chess/notation'
 import type { Castling, Color, Kind, Move, Snapshot, Square } from '../types/chess'
 
 export function useChess() {
@@ -60,9 +60,14 @@ export function useChess() {
     selected.value = current?.color === turn.value ? square : null
   }
 
+  const lastMoveInfo = ref<{ fenBefore: string; moveUci: string } | null>(null)
+
   function makeMove(move: Move, promotedKind?: Kind) {
     const piece = board.value[move.from.r][move.from.c]!
     const captured = Boolean(board.value[move.r][move.c]) || Boolean(move.enPassant)
+    const fenBeforeMove = fen.value
+    const moveUci = `${squareName(move.from)}${squareName({ r: move.r, c: move.c })}${promotedKind ? (promotedKind === 'queen' ? 'q' : promotedKind === 'rook' ? 'r' : promotedKind === 'bishop' ? 'b' : promotedKind === 'knight' ? 'n' : '') : move.promotion ? (move.promotion === 'queen' ? 'q' : move.promotion === 'rook' ? 'r' : move.promotion === 'bishop' ? 'b' : move.promotion === 'knight' ? 'n' : '') : ''}`
+    lastMoveInfo.value = { fenBefore: fenBeforeMove, moveUci }
     history.value.push({
       board: cloneBoard(board.value),
       turn: turn.value,
@@ -106,6 +111,7 @@ export function useChess() {
     moves.value.pop()
     selected.value = null
     promotion.value = null
+    lastMoveInfo.value = null
   }
 
   function reset() {
@@ -117,6 +123,7 @@ export function useChess() {
     moves.value = []
     selected.value = null
     promotion.value = null
+    lastMoveInfo.value = null
   }
 
   return {
@@ -131,6 +138,7 @@ export function useChess() {
     history,
     moves,
     promotion,
+    lastMoveInfo,
     choose,
     makeMove,
     undo,
