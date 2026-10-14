@@ -443,6 +443,34 @@ h2 {
   color: #c7c9c8;
 }
 
+.mode-toggle {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.mode-toggle button {
+  flex: 1;
+  border: 1px solid #303238;
+  border-radius: 7px;
+  padding: 9px 8px;
+  cursor: pointer;
+  font: 10px 'DM Mono', monospace;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+
+.mode-toggle button.active {
+  border-color: #c7f25d;
+  color: #c7f25d;
+}
+
+.bot-thinking {
+  margin-top: 10px;
+  color: #c7f25d;
+  font: 11px 'DM Mono', monospace;
+}
+
 .controls {
   display: flex;
   gap: 10px;
