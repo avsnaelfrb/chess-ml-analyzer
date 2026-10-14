@@ -2,6 +2,29 @@ import { onBeforeUnmount, ref, watch } from 'vue'
 import { ApiError, bestMove } from '../api/classify'
 import type { useChess } from './useChess'
 
+// Jeda minimal sebelum bot mengeksekusi langkah, agar terasa "berpikir".
+const BOT_THINK_MS = 5000
+
+/** Tunda ms; ditolak segera bila signal di-abort agar langkah tidak dipakai setelah reset. */
+function wait(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException('Dibatalkan', 'AbortError'))
+      return
+    }
+    let timer: ReturnType<typeof setTimeout>
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(new DOMException('Dibatalkan', 'AbortError'))
+    }
+    timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /** Mode vs bot: manusia putih, Stockfish hitam. Bot melangkah otomatis saat giliran hitam. */
 export function useBot(chess: ReturnType<typeof useChess>) {
   const enabled = ref(false)
@@ -15,8 +38,12 @@ export function useBot(chess: ReturnType<typeof useChess>) {
     controller = current
     thinking.value = true
     error.value = null
+    const startedAt = Date.now()
     try {
       const { move_uci } = await bestMove(chess.fen.value, current.signal)
+      // Engine sering menjawab instan; tahan agar bot terasa berpikir.
+      const remaining = BOT_THINK_MS - (Date.now() - startedAt)
+      if (remaining > 0) await wait(remaining, current.signal)
       if (current.signal.aborted) return
       if (!chess.playUci(move_uci)) {
         error.value = 'Engine memberi langkah yang tidak valid.'
