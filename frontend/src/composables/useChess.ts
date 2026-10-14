@@ -61,14 +61,17 @@ export function useChess() {
   }
 
   const lastMoveInfo = ref<{ fenBefore: string; moveUci: string } | null>(null)
+  // Langkah manusia terakhir — dipakai panel analisa di mode vs bot (bot tidak menimpanya).
+  const lastHumanMove = ref<{ fenBefore: string; moveUci: string } | null>(null)
 
-  function makeMove(move: Move, promotedKind?: Kind) {
+  function makeMove(move: Move, promotedKind?: Kind, byBot = false) {
     const piece = board.value[move.from.r][move.from.c]!
     const captured = Boolean(board.value[move.r][move.c]) || Boolean(move.enPassant)
     const fenBeforeMove = fen.value
     const promotionKind = promotedKind ?? move.promotion
     const moveUci = `${squareName(move.from)}${squareName({ r: move.r, c: move.c })}${promotionKind ? promotionLetter(promotionKind) : ''}`
     lastMoveInfo.value = { fenBefore: fenBeforeMove, moveUci }
+    if (!byBot) lastHumanMove.value = { fenBefore: fenBeforeMove, moveUci }
     history.value.push({
       board: cloneBoard(board.value),
       turn: turn.value,
@@ -113,6 +116,7 @@ export function useChess() {
     selected.value = null
     promotion.value = null
     lastMoveInfo.value = null
+    lastHumanMove.value = null
   }
 
   /** Mainkan langkah UCI dari engine bila legal. Kembalikan false tanpa mengubah state bila tak cocok. */
@@ -123,7 +127,7 @@ export function useChess() {
       m => squareName(m.from) === from && squareName({ r: m.r, c: m.c }) === to,
     )
     if (!move) return false
-    makeMove(move, kindFromPromotionLetter(uci[4]))
+    makeMove(move, kindFromPromotionLetter(uci[4]), true)
     return true
   }
 
@@ -137,6 +141,7 @@ export function useChess() {
     selected.value = null
     promotion.value = null
     lastMoveInfo.value = null
+    lastHumanMove.value = null
   }
 
   return {
@@ -152,6 +157,7 @@ export function useChess() {
     moves,
     promotion,
     lastMoveInfo,
+    lastHumanMove,
     choose,
     makeMove,
     playUci,
