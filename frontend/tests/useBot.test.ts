@@ -129,4 +129,23 @@ describe('useBot', () => {
     expect(bot.error.value).toBeNull()
     expect(chess.turn.value).toBe('white')
   })
+
+  it('lastHumanMove tetap langkah putih setelah bot membalas', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ move_uci: 'e7e5', model_version: 'Stockfish 19' })),
+    )
+
+    const chess = useChess()
+    const bot = useBot(chess)
+
+    bot.enabled.value = true
+    chess.choose({ r: 6, c: 4 }) // e2
+    chess.choose({ r: 4, c: 4 }) // e4 — langkah manusia
+
+    await vi.waitFor(() => expect(chess.turn.value).toBe('white'))
+
+    expect(chess.lastHumanMove.value?.moveUci).toBe('e2e4')
+    expect(chess.lastMoveInfo.value?.moveUci).toBe('e7e5')
+  })
 })
