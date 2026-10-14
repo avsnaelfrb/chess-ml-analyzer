@@ -33,11 +33,17 @@ export function useBot(chess: ReturnType<typeof useChess>) {
     }
   }
 
+  /** Batalkan request berjalan dan bersihkan status bot. */
+  function cancel() {
+    controller?.abort()
+    controller = null
+    thinking.value = false
+    error.value = null
+  }
+
   watch([chess.turn, chess.gameOver, enabled], () => {
     if (!enabled.value) {
-      controller?.abort()
-      controller = null
-      thinking.value = false
+      cancel()
       return
     }
     if (!chess.gameOver.value && chess.turn.value === 'black' && !thinking.value) {
@@ -47,5 +53,5 @@ export function useBot(chess: ReturnType<typeof useChess>) {
 
   onBeforeUnmount(() => controller?.abort())
 
-  return { enabled, thinking, error }
+  return { enabled, thinking, error, cancel }
 }
