@@ -121,7 +121,9 @@ Respons `/api/classify`:
   `engine.play(...)` pada depth `CHESS_ENGINE_DEPTH` (default 12) dan mengembalikan
   `move.uci()`.
 - `model_version` sama dengan yang dipakai `/api/analyze-move`.
-- Skakmat / remis (tidak ada langkah legal) → `422`; engine tidak ada → `503`.
+- Skakmat / remis **karena tidak ada langkah legal** (`not any(board.legal_moves)`;
+  `LegalMoveGenerator` tidak punya `.any()`) → `422`; engine tidak ada → `503`.
+  Material tidak cukup tetap punya langkah legal, jadi **tidak** ditolak.
 - Level bot = `CHESS_ENGINE_DEPTH`; belum ada parameter level per-request.
 
 ## Alur prediksi (FEN -> label)
