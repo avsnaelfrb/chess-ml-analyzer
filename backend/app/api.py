@@ -285,7 +285,7 @@ class MoveAnalyzer:
             raise ValueError(f"fen tidak valid: {exc}") from exc
         if not board.is_valid():
             raise ValueError("posisi fen tidak legal")
-        if board.is_game_over():
+        if not any(board.legal_moves):
             raise ValueError("tidak ada langkah legal")
 
         engine = self._ensure_engine()
