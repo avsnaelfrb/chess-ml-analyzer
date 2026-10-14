@@ -39,14 +39,21 @@ function promote(kind: Kind) {
   if (promotion.value) makeMove(promotion.value.move, kind)
 }
 
-// Manusia hanya boleh melangkah saat giliran putih dan bot tidak sibuk.
+// Manusia hanya boleh melangkah saat giliran putih dan bot tidak sibuk,
+// kecuali bot sedang error (agar permainan tidak terkunci).
 function onSelect(square: Square) {
-  if (bot.enabled.value && (turn.value === 'black' || bot.thinking.value)) return
+  if (bot.enabled.value && !bot.error.value && (turn.value === 'black' || bot.thinking.value)) return
   choose(square)
 }
 
 function toggleBot() {
+  bot.cancel()
   bot.enabled.value = !bot.enabled.value
+  reset()
+}
+
+function onReset() {
+  bot.cancel()
   reset()
 }
 
@@ -93,7 +100,7 @@ function onUndo() {
           :thinking="bot.thinking.value"
           :error="bot.error.value"
           @undo="onUndo"
-          @reset="reset"
+          @reset="onReset"
           @toggle-bot="toggleBot"
         />
         <p class="tip"><span>✦</span> Klik bidak lalu pilih kotak yang disorot untuk bergerak.</p>
