@@ -1,9 +1,10 @@
 # Backend — Chess Classification API
 
 API untuk **klasifikasi fase** permainan catur (`opening` / `middlegame` /
-`endgame`) dari satu string FEN, dan **analisis kualitas langkah**
-(`Good`/`Inaccuracy`/`Mistake`/`Blunder`) dari `fen_before` + langkah UCI memakai
-engine Stockfish. Kontraknya mengikuti `PLANNING.md` di root repo.
+`endgame`) dari satu string FEN, **analisis kualitas langkah**
+(`Good`/`Inaccuracy`/`Mistake`/`Blunder`) dari `fen_before` + langkah UCI, dan
+**langkah bot** (langkah terbaik engine). Analisis memakai engine Stockfish.
+Kontraknya mengikuti `PLANNING.md` di root repo.
 
 ## Struktur project
 
@@ -18,7 +19,7 @@ backend/
 ├── bin/                    # biner engine Stockfish (gitignored)
 ├── models/                 # artifact model.joblib + metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
-└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_model_behavior
+└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_model_behavior
 ```
 
 ## Menjalankan
@@ -44,7 +45,7 @@ Analisis langkah butuh biner engine. Unduh Stockfish resmi
 (`github.com/official-stockfish/Stockfish/releases/latest`, mis.
 `stockfish-linux-x86-64-universal.tar.gz`) dan taruh binernya di
 `bin/stockfish`, atau set `CHESS_STOCKFISH_PATH`. Tanpa biner,
-`/api/analyze-move` membalas `503` (server tetap hidup).
+`/api/analyze-move` dan `/api/best-move` membalas `503` (server tetap hidup).
 
 ## Endpoint
 
@@ -84,8 +85,23 @@ Respons (ratu digantung → blunder):
 }
 ```
 
+### Langkah bot
+
+```bash
+curl -X POST http://localhost:8000/api/best-move \
+  -H 'Content-Type: application/json' \
+  -d '{"fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"}'
+```
+
+Respons:
+
+```json
+{ "move_uci": "e7e5", "model_version": "Stockfish 19" }
+```
+
 - `GET /api/health` → `{"status": "ok"}`
 - FEN / posisi / langkah tidak valid → `422` dengan `{ "detail": "..." }`
+- Tanpa langkah legal (skakmat / remis) → `422`
 - Model fase atau engine belum ada → `503`
 
 ## Catatan desain
