@@ -103,6 +103,20 @@ class AnalyzeMoveResponse(BaseModel):
     model_version: str
 
 
+class BestMoveRequest(BaseModel):
+    fen: str = Field(
+        ...,
+        min_length=1,
+        description="Posisi giliran yang harus melangkah (FEN).",
+        examples=["rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"],
+    )
+
+
+class BestMoveResponse(BaseModel):
+    move_uci: str
+    model_version: str
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
 
@@ -264,6 +278,27 @@ class MoveAnalyzer:
         cp_loss = max(0.0, _score_cp(before, mover) - _score_cp(after, mover))
         return MoveAnalysis(cp_loss=cp_loss, quality=quality_from_cp_loss(cp_loss))
 
+    def best_move(self, fen: str) -> str:
+        try:
+            board = chess.Board(fen)  # ValueError bila FEN tidak valid
+        except ValueError as exc:
+            raise ValueError(f"fen tidak valid: {exc}") from exc
+        if not board.is_valid():
+            raise ValueError("posisi fen tidak legal")
+        if board.is_game_over():
+            raise ValueError("tidak ada langkah legal")
+
+        engine = self._ensure_engine()
+        limit = chess.engine.Limit(depth=self._depth)
+        try:
+            with self._lock:
+                result = engine.play(board, limit)
+        except chess.engine.EngineError as exc:
+            # Engine mati: buang agar request berikutnya memulai proses baru.
+            self._engine = None
+            raise ModelNotLoadedError(f"Engine gagal mencari langkah: {exc}") from exc
+        return result.move.uci()
+
     def close(self) -> None:
         if self._engine is not None:
             with self._lock:
@@ -341,6 +376,26 @@ def analyze_move(payload: AnalyzeMoveRequest, request: Request) -> AnalyzeMoveRe
         probabilities=MoveQualityProbabilities(**probabilities),
         model_version=analyzer.model_version,
     )
+
+
+@router.post("/best-move", response_model=BestMoveResponse)
+def best_move(payload: BestMoveRequest, request: Request) -> BestMoveResponse:
+    analyzer: MoveAnalyzer = request.app.state.move_analyzer
+
+    try:
+        move_uci = analyzer.best_move(payload.fen)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except ModelNotLoadedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+
+    return BestMoveResponse(move_uci=move_uci, model_version=analyzer.model_version)
 
 
 # ============================== App factory ==============================
