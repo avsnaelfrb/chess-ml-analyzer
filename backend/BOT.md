@@ -58,7 +58,7 @@ Pola sudah ada di `/api/analyze-move`; tiru apa adanya.
       board = chess.Board(fen)          # ValueError -> FEN tidak valid
       if not board.is_valid():
           raise ValueError("posisi fen tidak legal")
-      if board.is_game_over():
+      if not any(board.legal_moves):
           raise ValueError("tidak ada langkah legal")
       engine = self._ensure_engine()    # bisa ModelNotLoadedError (503)
       limit = chess.engine.Limit(depth=self._depth)
@@ -75,8 +75,11 @@ Pola sudah ada di `/api/analyze-move`; tiru apa adanya.
   panggil `analyzer.best_move(payload.fen)`, tangkap `ValueError` → `422` dan
   `ModelNotLoadedError` → `503` (`HTTPException`), persis pola `analyze_move`.
 
-Catatan: `board.is_game_over()` juga benar untuk stalemate. Kalau ragu, pakai
-`not board.legal_moves.any()`. FEN dengan langkah legal tidak akan kena.
+Catatan: cek "tidak ada langkah legal" pakai `not any(board.legal_moves)`, bukan
+`board.is_game_over()` — `is_game_over()` juga true untuk material tidak cukup
+(mis. Raja vs Raja), aturan 75 langkah, dan repetisi lima kali, padahal posisi
+seperti itu masih punya langkah legal. (`LegalMoveGenerator` di python-chess
+1.11.2 tidak punya `.any()`.)
 
 ### 2. `app/config.py`
 
