@@ -25,6 +25,7 @@ const {
   moves,
   promotion,
   lastMoveInfo,
+  lastHumanMove,
   choose,
   makeMove,
   undo,
@@ -34,6 +35,9 @@ const {
 const bot = useBot(chessApi)
 
 const canUndo = computed(() => history.value.length > 0 && !(bot.enabled.value && bot.thinking.value))
+
+// Di mode vs bot, panel menganalisa langkah manusia (putih), bukan balasan bot.
+const lastMoveForPanel = computed(() => (bot.enabled.value ? lastHumanMove.value : lastMoveInfo.value))
 
 function promote(kind: Kind) {
   if (promotion.value) makeMove(promotion.value.move, kind)
@@ -92,7 +96,7 @@ function onUndo() {
       </div>
       <aside class="side-panel">
         <StatusPanel :status="status" :game-over="gameOver" :checked="checked" />
-        <AnalysisPanel :fen="fen" :last-move="lastMoveInfo" />
+        <AnalysisPanel :fen="fen" :last-move="lastMoveForPanel" />
         <MoveHistory :moves="moves" />
         <GameControls
           :can-undo="canUndo"
