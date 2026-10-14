@@ -18,6 +18,7 @@ Cara pakai:
 |---|---|---|---|
 | FE-001 | Tombol "Permainan baru" tidak membatalkan request bot | Sedang | FIXED |
 | FE-002 | Manusia terkunci setelah bot gagal (503) | Sedang | FIXED |
+| FE-005 | "Analisis langkah terakhir" menganalisa langkah bot, bukan langkah manusia | Sedang | FIXED |
 | FE-003 | Pesan error lama muncul lagi setelah toggle bot off→on | Rendah | FIXED |
 | FE-004 | Peta huruf promosi terduplikasi (invers) | Rendah | FIXED |
 
@@ -213,3 +214,123 @@ ragu, biarkan (`WONTFIX` + alasan) — ini bukan blocker rilis.
 
 - Underpromotion bot (`b7b8n`) tetap jalan.
 - `deno task build` lolos.
+
+---
+
+## FE-005 — "Analisis langkah terakhir" menganalisa langkah bot, bukan langkah manusia
+
+- **Lokasi:** `frontend/src/composables/useChess.ts:71` (`makeMove` menulis
+  `lastMoveInfo`), `frontend/src/composables/useBot.ts:21` (bot memanggil
+  `playUci` → `makeMove`), `frontend/src/App.vue` (`:last-move="lastMoveInfo"`)
+- **Severity:** Sedang
+- **Status:** FIXED
+- **Bukti:** `useChess` kini melacak `lastHumanMove` terpisah; `makeMove(..., byBot)`
+  hanya mengisi `lastHumanMove` saat `!byBot`, `playUci` menandai `byBot = true`,
+  dan `undo`/`reset` mengosongkannya (`4aaa297`). `App.vue` memakai
+  `lastMoveForPanel` = `lastHumanMove` saat mode vs bot (`fcfa12b`). Uji regresi
+  `5c32d84`, `c19d3d1`. `deno task test` 18/18 lolos, `deno task build` lolos.
+
+### Apa ini
+
+`lastMoveInfo` diperbarui oleh **setiap** langkah — manusia maupun bot. Di mode
+vs bot, bot selalu melangkah **setelah** manusia, jadi `lastMoveInfo` hampir
+selalu berisi langkah Stockfish (hitam). Tombol "Analisis langkah terakhir"
+karena itu selalu menganalisa langkah bot (yang memang bagus → hampir selalu
+"Good"), sementara langkah manusia (putih) tidak pernah dianalisa.
+
+Dilaporkan pengguna: "saya harap analisa untuk sisi putih, tapi output selalu
+Good walau saya blunder".
+
+### Bukti dari log server (bukan dugaan)
+
+`move_uci` pada `/api/analyze-move` **persis sama** dengan jawaban
+`/api/best-move` tepat sebelumnya:
+
+```
+20:51:02 best-move   -> g8f6
+20:51:05 analyze-move (fen_before sama) move=g8f6 -> Good cp_loss=8
+20:52:07 best-move   -> e6f5
+20:52:10 analyze-move (fen_before sama) move=e6f5 -> Good cp_loss=44
+```
+
+Jadi yang dianalisa adalah langkah mesin, bukan langkah putih pengguna.
+
+### Reproduksi
+
+1. Toggle "vs bot", main beberapa langkah putih yang sengaja jelek (mis.
+   `1.e4 c5 2.f4 e6 3.Qh5 Nc6 4.Bc4 Nf6 5.Qh3 Nxe4 ...`).
+2. Setelah bot membalas, klik **"Analisis langkah terakhir"**.
+3. Hasilnya selalu "Good" walau langkah putih jelas keliru.
+
+### Expected
+
+Tombol menganalisa langkah **manusia** (putih) terakhir — sesuai harapan
+"analisa untuk sisi putih".
+
+### Actual
+
+Menganalisa langkah bot. Gejala tambahan: kalau tombol ditekan saat bot masih
+berpikir (ketika `lastMoveInfo` masih langkah putih), hasilnya **terhapus** begitu
+bot melangkah, karena `AnalysisPanel.vue` mereset `moveResult` saat prop
+`lastMove` berubah.
+
+### Bukan bug backend (jangan ubah `/api/analyze-move`)
+
+`MoveAnalyzer.analyze` sudah benar dan simetris untuk kedua warna (diuji langsung):
+
+```
+PUTIH gantung ratu -> quality=Blunder cp_loss=1362.0
+HITAM gantung ratu -> quality=Blunder cp_loss=1297.0
+e2e4               -> quality=Good    cp_loss=4.0
+```
+
+Perspektif memakai `pov(mover)`, jadi tidak ada masalah "sisi". Akar masalahnya
+murni di frontend: langkah mana yang disimpan sebagai "terakhir".
+
+### Fix terkecil (opsi terpilih: analisa langkah manusia)
+
+Simpan langkah manusia terpisah, lalu oper itu ke panel saat mode bot:
+
+```ts
+// useChess.ts
+const lastHumanMove = ref<{ fenBefore: string; moveUci: string } | null>(null)
+
+function makeMove(move: Move, promotedKind?: Kind, byBot = false) {
+  // ... existing ...
+  lastMoveInfo.value = { fenBefore: fenBeforeMove, moveUci }
+  if (!byBot) lastHumanMove.value = { fenBefore: fenBeforeMove, moveUci }
+  // ...
+}
+
+function playUci(uci: string): boolean {
+  // ...
+  makeMove(move, promotedKind, true)   // tandai sebagai langkah bot
+  return true
+}
+```
+
+- `undo()` dan `reset()` juga mengosongkan `lastHumanMove`.
+- Expose `lastHumanMove` dari `useChess`.
+
+```ts
+// App.vue
+const lastMoveForPanel = computed(() =>
+  bot.enabled.value ? lastHumanMove.value : lastMoveInfo.value,
+)
+// template: <AnalysisPanel :fen="fen" :last-move="lastMoveForPanel" />
+```
+
+Dengan ini, saat bot melangkah `lastMoveForPanel` tidak berubah → hasil analisa
+langkah manusia tidak ikut terhapus.
+
+Alternatif (pilih salah satu): tampilkan dua hasil terpisah ("langkah saya" +
+"langkah bot"), atau minimal beri label pemilik langkah. Rekomendasi tetap opsi
+di atas.
+
+### Verifikasi
+
+- Mode vs bot: main langkah putih jelek → klik analisa sebelum/sesudah bot
+  membalas → hasil tetap menganalisa langkah putih dan **tidak** terhapus saat bot
+  melangkah.
+- Mode 2 pemain: perilaku lama tidak berubah ("analisis langkah terakhir").
+- `deno task test` dan `deno task build` lolos.
