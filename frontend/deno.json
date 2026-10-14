@@ -2,6 +2,7 @@
   "tasks": {
     "dev": "vite",
     "build": "node node_modules/.bin/vue-tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   }
 }
