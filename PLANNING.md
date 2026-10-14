@@ -323,7 +323,10 @@ backend/
 - Proses async / queue.
 - Analisis seluruh permainan sekaligus (batch).
 - Training dari dalam server API.
-- Memprediksi langkah terbaik (policy) — hanya **menilai** langkah yang sudah dimainkan.
+- Memprediksi langkah terbaik (policy) **sebagai model ML** — model hanya
+  **menilai** langkah yang sudah dimainkan. Pengecualian: mode **vs bot** memilih
+  langkah lewat engine **Stockfish** (bukan model ML); kontraknya di
+  `backend/BOT.md` + `frontend/BOT.md`.
 
 ## 13. Risiko & catatan
 
