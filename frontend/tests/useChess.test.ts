@@ -58,3 +58,31 @@ describe('useChess.playUci', () => {
     expect(chess.board.value[7][1]).toMatchObject({ color: 'black', kind: 'queen' })
   })
 })
+
+describe('useChess.lastHumanMove', () => {
+  it('mencatat langkah manusia; langkah bot (playUci) tidak menimpanya', () => {
+    const chess = useChess()
+
+    chess.choose({ r: 6, c: 4 }) // e2
+    chess.choose({ r: 4, c: 4 }) // e4 — langkah manusia
+    expect(chess.lastHumanMove.value?.moveUci).toBe('e2e4')
+
+    expect(chess.playUci('e7e5')).toBe(true) // balasan bot
+    expect(chess.lastMoveInfo.value?.moveUci).toBe('e7e5')
+    expect(chess.lastHumanMove.value?.moveUci).toBe('e2e4')
+  })
+
+  it('dikosongkan oleh undo dan reset', () => {
+    const chess = useChess()
+    chess.choose({ r: 6, c: 4 })
+    chess.choose({ r: 4, c: 4 })
+
+    chess.undo()
+    expect(chess.lastHumanMove.value).toBeNull()
+
+    chess.choose({ r: 6, c: 4 })
+    chess.choose({ r: 4, c: 4 })
+    chess.reset()
+    expect(chess.lastHumanMove.value).toBeNull()
+  })
+})
