@@ -62,6 +62,7 @@ Base URL dev: `http://localhost:8000`.
 | `GET /api/health` | `200 {"status":"ok"}` | — |
 | `POST /api/classify` | `200` (lihat bawah) | `422` FEN invalid / body salah, `503` model belum ada |
 | `POST /api/analyze-move` | `200` (lihat bawah) | `422` FEN/posisi/langkah tidak valid, `503` engine belum ada |
+| `POST /api/best-move` | `200 {"move_uci","model_version"}` | `422` FEN/posisi/skakmat, `503` engine belum ada |
 
 Respons `/api/classify`:
 
@@ -104,6 +105,24 @@ Respons `/api/classify`:
 - Biner default `bin/stockfish`; ubah lewat env `CHESS_STOCKFISH_PATH`. Engine
   dijalankan **malas** (saat analisis pertama) dan dimatikan saat shutdown.
   Tanpa biner → `503` (server tetap hidup).
+
+## Langkah bot (endpoint ketiga, engine Stockfish)
+
+`POST /api/best-move` mengembalikan langkah terbaik untuk posisi giliran.
+
+```json
+// Request
+{ "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1" }
+// Respons 200
+{ "move_uci": "e7e5", "model_version": "Stockfish 19" }
+```
+
+- Alur: `MoveAnalyzer.best_move(fen)` memvalidasi FEN + legalitas posisi, lalu
+  `engine.play(...)` pada depth `CHESS_ENGINE_DEPTH` (default 12) dan mengembalikan
+  `move.uci()`.
+- `model_version` sama dengan yang dipakai `/api/analyze-move`.
+- Skakmat / remis (tidak ada langkah legal) → `422`; engine tidak ada → `503`.
+- Level bot = `CHESS_ENGINE_DEPTH`; belum ada parameter level per-request.
 
 ## Alur prediksi (FEN -> label)
 
