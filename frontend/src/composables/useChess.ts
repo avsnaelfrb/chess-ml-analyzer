@@ -114,6 +114,29 @@ export function useChess() {
     lastMoveInfo.value = null
   }
 
+  /** Mainkan langkah UCI dari engine bila legal. Kembalikan false tanpa mengubah state bila tak cocok. */
+  function playUci(uci: string): boolean {
+    const from = uci.slice(0, 2)
+    const to = uci.slice(2, 4)
+    const move = allLegal(currentPosition(), turn.value).find(
+      m => squareName(m.from) === from && squareName({ r: m.r, c: m.c }) === to,
+    )
+    if (!move) return false
+    const promo = uci[4]
+    const promotedKind: Kind | undefined =
+      promo === 'q'
+        ? 'queen'
+        : promo === 'r'
+          ? 'rook'
+          : promo === 'b'
+            ? 'bishop'
+            : promo === 'n'
+              ? 'knight'
+              : undefined
+    makeMove(move, promotedKind)
+    return true
+  }
+
   function reset() {
     board.value = createBoard()
     turn.value = 'white'
@@ -141,6 +164,7 @@ export function useChess() {
     lastMoveInfo,
     choose,
     makeMove,
+    playUci,
     undo,
     reset,
   }
