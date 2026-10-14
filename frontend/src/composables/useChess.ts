@@ -2,7 +2,7 @@ import { computed, ref } from 'vue'
 import { cloneBoard, createBoard, initialCastling } from '../lib/chess/board'
 import { allLegal, applyMove, inCheck, legalMoves, opposite, type Position } from '../lib/chess/engine'
 import { toFen } from '../lib/chess/fen'
-import { colorName, moveNotation, squareName } from '../lib/chess/notation'
+import { colorName, kindFromPromotionLetter, moveNotation, promotionLetter, squareName } from '../lib/chess/notation'
 import type { Castling, Color, Kind, Move, Snapshot, Square } from '../types/chess'
 
 export function useChess() {
@@ -66,7 +66,8 @@ export function useChess() {
     const piece = board.value[move.from.r][move.from.c]!
     const captured = Boolean(board.value[move.r][move.c]) || Boolean(move.enPassant)
     const fenBeforeMove = fen.value
-    const moveUci = `${squareName(move.from)}${squareName({ r: move.r, c: move.c })}${promotedKind ? (promotedKind === 'queen' ? 'q' : promotedKind === 'rook' ? 'r' : promotedKind === 'bishop' ? 'b' : promotedKind === 'knight' ? 'n' : '') : move.promotion ? (move.promotion === 'queen' ? 'q' : move.promotion === 'rook' ? 'r' : move.promotion === 'bishop' ? 'b' : move.promotion === 'knight' ? 'n' : '') : ''}`
+    const promotionKind = promotedKind ?? move.promotion
+    const moveUci = `${squareName(move.from)}${squareName({ r: move.r, c: move.c })}${promotionKind ? promotionLetter(promotionKind) : ''}`
     lastMoveInfo.value = { fenBefore: fenBeforeMove, moveUci }
     history.value.push({
       board: cloneBoard(board.value),
@@ -122,18 +123,7 @@ export function useChess() {
       m => squareName(m.from) === from && squareName({ r: m.r, c: m.c }) === to,
     )
     if (!move) return false
-    const promo = uci[4]
-    const promotedKind: Kind | undefined =
-      promo === 'q'
-        ? 'queen'
-        : promo === 'r'
-          ? 'rook'
-          : promo === 'b'
-            ? 'bishop'
-            : promo === 'n'
-              ? 'knight'
-              : undefined
-    makeMove(move, promotedKind)
+    makeMove(move, kindFromPromotionLetter(uci[4]))
     return true
   }
 
