@@ -22,7 +22,7 @@ import chess
 import chess.engine
 import joblib
 import numpy as np
-from fastapi import APIRouter, FastAPI, HTTPException, Request, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -436,6 +436,24 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def log_io(request: Request, call_next):
+        """Cetak payload request/response tiap /api/* ke terminal (bantu debug)."""
+        log = request.method != "OPTIONS" and request.url.path.startswith("/api/")
+        body = await request.body() if log else b""
+        response = await call_next(request)
+        payload = b"".join([chunk async for chunk in response.body_iterator])
+        if log:
+            logger.info("%s %s <- %s", request.method, request.url.path, body.decode(errors="replace") or "-")
+            logger.info(
+                "%s %s -> %s %s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                payload.decode(errors="replace") or "-",
+            )
+        return Response(content=payload, status_code=response.status_code, headers=dict(response.headers))
 
     app.state.classifier = phase_classifier
     app.state.move_analyzer = analyzer
