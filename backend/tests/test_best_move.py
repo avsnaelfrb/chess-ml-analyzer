@@ -52,6 +52,22 @@ def test_best_move_without_engine_returns_503() -> None:
 
 
 @pytest.mark.skipif(not _engine_available(), reason="biner Stockfish belum tersedia")
+def test_best_move_insufficient_material_still_plays() -> None:
+    # Raja vs Raja: is_game_over() True (material tidak cukup) TAPI ada langkah legal.
+    analyzer = MoveAnalyzer()
+    try:
+        client = _client(analyzer)
+        fen = "8/8/8/4k3/8/4K3/8/8 b - - 0 1"
+        response = client.post("/api/best-move", json={"fen": fen})
+        assert response.status_code == 200
+
+        body = response.json()
+        assert chess.Move.from_uci(body["move_uci"]) in chess.Board(fen).legal_moves
+    finally:
+        analyzer.close()
+
+
+@pytest.mark.skipif(not _engine_available(), reason="biner Stockfish belum tersedia")
 def test_best_move_returns_legal_move() -> None:
     analyzer = MoveAnalyzer()
     try:
