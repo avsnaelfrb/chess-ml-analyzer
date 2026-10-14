@@ -101,7 +101,7 @@ Respons:
 
 - `GET /api/health` → `{"status": "ok"}`
 - FEN / posisi / langkah tidak valid → `422` dengan `{ "detail": "..." }`
-- Tanpa langkah legal (skakmat / remis) → `422`
+- Skakmat / remis **karena tidak ada langkah legal** → `422`
 - Model fase atau engine belum ada → `503`
 
 ## Catatan desain
