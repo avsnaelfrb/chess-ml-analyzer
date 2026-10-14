@@ -84,4 +84,49 @@ describe('useBot', () => {
 
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  it('cancel() membersihkan error dan thinking', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ detail: 'Engine tidak tersedia' }, 503)),
+    )
+
+    const chess = useChess()
+    const bot = useBot(chess)
+
+    bot.enabled.value = true
+    chess.playUci('e2e4')
+    await vi.waitFor(() => expect(bot.error.value).not.toBeNull())
+
+    bot.cancel()
+
+    expect(bot.error.value).toBeNull()
+    expect(bot.thinking.value).toBe(false)
+  })
+
+  it('membatalkan request yang telat agar tidak ada error palsu (reset)', async () => {
+    let resolveFetch!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        () => new Promise<Response>(resolve => (resolveFetch = resolve)),
+      ),
+    )
+
+    const chess = useChess()
+    const bot = useBot(chess)
+
+    bot.enabled.value = true
+    chess.playUci('e2e4')
+    await nextTick() // request mulai terbang
+
+    bot.cancel()
+    chess.reset() // papan kembali ke posisi awal
+    resolveFetch(jsonResponse({ move_uci: 'e7e5', model_version: 'Stockfish 19' }))
+    await nextTick()
+    await nextTick()
+
+    expect(bot.error.value).toBeNull()
+    expect(chess.turn.value).toBe('white')
+  })
 })
