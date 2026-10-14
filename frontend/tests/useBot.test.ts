@@ -10,7 +10,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 describe('useBot', () => {
   it('melangkah otomatis saat giliran hitam', async () => {
@@ -18,6 +21,7 @@ describe('useBot', () => {
       .fn()
       .mockResolvedValue(jsonResponse({ move_uci: 'e7e5', model_version: 'Stockfish 19' }))
     vi.stubGlobal('fetch', fetchMock)
+    vi.useFakeTimers()
 
     const chess = useChess()
     const bot = useBot(chess)
@@ -26,7 +30,10 @@ describe('useBot', () => {
     chess.playUci('e2e4') // sekarang giliran hitam
     const fenAfterWhite = chess.fen.value
 
-    await vi.waitFor(() => expect(chess.turn.value).toBe('white'))
+    await vi.advanceTimersByTimeAsync(0) // watcher + fetch
+    expect(chess.turn.value).toBe('black') // masih menunggu jeda
+    await vi.advanceTimersByTimeAsync(5000) // lewati jeda
+    expect(chess.turn.value).toBe('white')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toBe('/api/best-move')
@@ -138,12 +145,14 @@ describe('useBot', () => {
 
     const chess = useChess()
     const bot = useBot(chess)
+    vi.useFakeTimers()
 
     bot.enabled.value = true
     chess.choose({ r: 6, c: 4 }) // e2
     chess.choose({ r: 4, c: 4 }) // e4 — langkah manusia
 
-    await vi.waitFor(() => expect(chess.turn.value).toBe('white'))
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(5000)
 
     expect(chess.lastHumanMove.value?.moveUci).toBe('e2e4')
     expect(chess.lastMoveInfo.value?.moveUci).toBe('e7e5')
