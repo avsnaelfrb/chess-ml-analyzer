@@ -1,7 +1,10 @@
 # Backend — Chess Classification API
 
-API klasifikasi **fase permainan catur** (`opening` / `middlegame` / `endgame`)
-langsung dari satu string FEN. Kontraknya mengikuti `PLANNING.md` di root repo.
+API untuk **klasifikasi fase** permainan catur (`opening` / `middlegame` /
+`endgame`) dari satu string FEN, **analisis kualitas langkah**
+(`Good`/`Inaccuracy`/`Mistake`/`Blunder`) dari `fen_before` + langkah UCI, dan
+**langkah bot** (langkah terbaik engine). Analisis memakai engine Stockfish.
+Kontraknya mengikuti `PLANNING.md` di root repo.
 
 ## Struktur project
 
@@ -11,11 +14,12 @@ backend/
 ├── train.py                # entrypoint training model
 ├── app/
 │   ├── config.py           # path & setting (env CHESS_*)
-│   ├── api.py              # skema + classifier + endpoint + app factory
+│   ├── api.py              # skema + classifier fase + MoveAnalyzer (engine) + endpoint
 │   └── ml.py               # label + fitur FEN + dataset + training
+├── bin/                    # biner engine Stockfish (gitignored)
 ├── models/                 # artifact model.joblib + metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
-└── tests/                  # test_api, test_features, test_pawn_structure, test_model_behavior
+└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_model_behavior
 ```
 
 ## Menjalankan
@@ -37,6 +41,12 @@ Bila `models/model.joblib` belum ada, server tetap hidup tetapi
 `/api/classify` mengembalikan `503` (tidak crash) supaya frontend bisa
 berintegrasi lebih dulu.
 
+Analisis langkah butuh biner engine. Unduh Stockfish resmi
+(`github.com/official-stockfish/Stockfish/releases/latest`, mis.
+`stockfish-linux-x86-64-universal.tar.gz`) dan taruh binernya di
+`bin/stockfish`, atau set `CHESS_STOCKFISH_PATH`. Tanpa biner,
+`/api/analyze-move` dan `/api/best-move` membalas `503` (server tetap hidup).
+
 ## Endpoint
 
 ```bash
@@ -56,9 +66,43 @@ Respons:
 }
 ```
 
+### Analisis langkah
+
+```bash
+curl -X POST http://localhost:8000/api/analyze-move \
+  -H 'Content-Type: application/json' \
+  -d '{"fen_before":"3r2k1/8/8/8/3Q4/8/5PP1/6K1 w - - 0 1","move_uci":"f2f3"}'
+```
+
+Respons (ratu digantung → blunder):
+
+```json
+{
+  "quality": "Blunder",
+  "cp_loss": 1340.0,
+  "probabilities": { "Good": 0.0, "Inaccuracy": 0.0, "Mistake": 0.0, "Blunder": 1.0 },
+  "model_version": "Stockfish 19"
+}
+```
+
+### Langkah bot
+
+```bash
+curl -X POST http://localhost:8000/api/best-move \
+  -H 'Content-Type: application/json' \
+  -d '{"fen":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"}'
+```
+
+Respons:
+
+```json
+{ "move_uci": "e7e5", "model_version": "Stockfish 19" }
+```
+
 - `GET /api/health` → `{"status": "ok"}`
-- FEN tidak valid → `422` dengan `{ "detail": "..." }`
-- Model belum ada → `503`
+- FEN / posisi / langkah tidak valid → `422` dengan `{ "detail": "..." }`
+- Skakmat / remis **karena tidak ada langkah legal** → `422`
+- Model fase atau engine belum ada → `503`
 
 ## Catatan desain
 
@@ -71,6 +115,9 @@ Respons:
   opening yang sama banyak terulang antar-game.
 - **Dataset.** Label diambil apa adanya dari kolom `phase`; tidak ada heuristik
   label buatan sendiri (lihat `app/ml.py`).
+- **Analisis langkah = engine, bukan ML.** Label `move_quality` di dataset
+  timpang (99,35% Good) dan hanya ambang `cp_loss`, jadi kualitas dihitung
+  Stockfish langsung — bukan dilatih.
 
 ## Test
 

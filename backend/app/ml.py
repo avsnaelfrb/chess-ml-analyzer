@@ -6,9 +6,12 @@ Alur data:
 Label fase mengikuti kolom ``phase`` dataset; tidak ada heuristik label buatan
 sendiri (menghindari sirkularitas).
 
-Training:
-    uv run python -m app.ml                       # sampel 200k, default
-    uv run python -m app.ml --sample 0            # seluruh dataset
+Training (dari folder backend/):
+    uv run python train.py                       # sampel 200k, default
+    uv run python train.py --sample 0            # seluruh dataset
+
+Jangan jalankan `python -m app.ml`: kelas fitur akan ter-pickle di bawah
+``__main__`` sehingga ``model.joblib`` gagal dimuat. Pakai ``train.py``.
 """
 
 from __future__ import annotations
@@ -253,15 +256,13 @@ class FenFeatureExtractor(BaseEstimator, TransformerMixin):
     def transform(self, X: Sequence[str]) -> np.ndarray:
         return np.asarray([fen_to_vector(fen) for fen in X], dtype=float)
 
-    def get_feature_names_out(self, input_features: object = None) -> np.ndarray:
-        return np.asarray(FEATURE_NAMES, dtype=object)
-
 
 # ============================== Loader dataset ==============================
 # Dibaca streaming per-chunk supaya file besar (~500 MB) tidak masuk memori
 # sekaligus. Hanya kolom yang dibutuhkan yang diambil.
 
-REQUIRED_COLUMNS: tuple[str, ...] = ("game_id", "ply", "fen_before", "phase")
+# Hanya kolom yang dipakai; "ply" tidak dibaca karena diturunkan dari FEN.
+REQUIRED_COLUMNS: tuple[str, ...] = ("game_id", "fen_before", "phase")
 FEN_COLUMN = "fen_before"
 LABEL_COLUMN = "phase"
 GROUP_COLUMN = "game_id"
@@ -474,15 +475,18 @@ def main(argv: list[str] | None = None) -> int:
     for item in metrics["top_features"]:
         print(f"  {item['name']:<22} {item['importance']:.5f}")
 
+    # Tulis ke file sementara lalu ganti, agar artifact lama tidak rusak bila
+    # proses berhenti di tengah penulisan.
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(pipeline, args.output)
+    tmp_model = args.output.with_name(args.output.name + ".tmp")
+    joblib.dump(pipeline, tmp_model)
+    tmp_model.replace(args.output)
+
     args.metrics.parent.mkdir(parents=True, exist_ok=True)
-    args.metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    tmp_metrics = args.metrics.with_name(args.metrics.name + ".tmp")
+    tmp_metrics.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    tmp_metrics.replace(args.metrics)
 
     print(f"\nModel disimpan : {args.output}")
     print(f"Metrik disimpan: {args.metrics}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
