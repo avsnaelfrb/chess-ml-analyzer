@@ -15,6 +15,11 @@ export type AnalyzeMoveResponse = {
   model_version: string
 }
 
+export type BestMoveResponse = {
+  move_uci: string
+  model_version: string
+}
+
 /** Error dari lapisan API, membawa status HTTP (0 untuk kegagalan jaringan). */
 export class ApiError extends Error {
   readonly status: number
@@ -92,4 +97,26 @@ export async function analyzeMove(
   }
 
   return (await response.json()) as AnalyzeMoveResponse
+}
+
+/** Minta langkah terbaik dari engine untuk posisi (giliran yang harus melangkah). */
+export async function bestMove(fen: string, signal?: AbortSignal): Promise<BestMoveResponse> {
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE}/api/best-move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fen }),
+      signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') throw error
+    throw new ApiError('Tidak dapat terhubung ke server engine.', 0)
+  }
+
+  if (!response.ok) {
+    throw new ApiError(await readDetail(response), response.status)
+  }
+
+  return (await response.json()) as BestMoveResponse
 }
