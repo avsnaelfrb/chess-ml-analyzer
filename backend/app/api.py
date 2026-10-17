@@ -528,7 +528,12 @@ def create_app(
 
     @app.middleware("http")
     async def log_io(request: Request, call_next):
-        """Cetak payload request/response tiap /api/* ke terminal (bantu debug)."""
+        """Cetak payload request/response tiap /api/* ke terminal (bantu debug).
+
+        shortcut: body dipotong 300 karakter dan karakter barisnya dinetralkan —
+        cukup untuk debug dev, tapi isi FEN tetap masuk log. Naikkan ke level
+        DEBUG atau buang log ini kalau suatu saat ada deployment produksi.
+        """
         if request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
             return await call_next(request)
 
