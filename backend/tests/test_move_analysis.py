@@ -41,6 +41,14 @@ def test_analyze_move_invalid_fen_returns_422() -> None:
     assert response.status_code == 422
 
 
+def test_analyze_move_absurd_fullmove_returns_422() -> None:
+    """BE-003: sama seperti best-move — ditolak sebelum engine disentuh."""
+    client = _client(MoveAnalyzer(engine_path=MISSING_ENGINE))
+    fen = START_FEN.rsplit(" ", 1)[0] + " 99999"
+    response = client.post("/api/analyze-move", json={"fen_before": fen, "move_uci": "e2e4"})
+    assert response.status_code == 422
+
+
 def test_analyze_move_illegal_move_returns_422() -> None:
     client = _client(MoveAnalyzer(engine_path=MISSING_ENGINE))
     response = client.post("/api/analyze-move", json={"fen_before": START_FEN, "move_uci": "e2e5"})

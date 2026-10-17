@@ -1,7 +1,7 @@
 """Eksperimen: bandingkan set fitur & algoritma untuk klasifikasi fase.
 
 Bukan bagian dari kontrak produksi. Tujuannya menjawab:
-  - apakah fitur non-ply (murni posisi) mengubah perilaku model?
+  - apakah fitur giliran (side/castling/ep) ikut menentukan label fase?
   - apakah algoritma lain mengubah hasil?
 
 Jalankan dari folder backend/:
@@ -12,6 +12,7 @@ Jalankan dari folder backend/:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,6 @@ from .ml import (
     normalize_phase,
 )
 
-PLY_FEATURES = ("ply", "fullmove_number", "halfmove_clock")
 TURN_FEATURES = ("side_to_move_white", "castling_rights", "has_en_passant")
 
 # Posisi probe: laporan label tiap varian pada kasus yang "menyakitkan".
@@ -71,14 +71,13 @@ def feature_sets(frame: pd.DataFrame) -> dict[str, list[str]]:
         "queen_count_total",
         "has_queens",
     ]
-    no_ply = [n for n in all_names if n not in PLY_FEATURES]
-    no_ply_no_turn = [n for n in no_ply if n not in TURN_FEATURES]
+    # Catatan: fitur waktu (ply/fullmove/halfmove) sudah tidak ada di
+    # FEATURE_NAMES — itu label leakage (BE-005), jadi tidak ada varian "no_ply".
+    no_turn = [n for n in all_names if n not in TURN_FEATURES]
     return {
         "baseline": all_names,
-        "no_ply": no_ply,
-        "no_ply_no_turn": no_ply_no_turn,
+        "no_turn": no_turn,
         "positional(+derived)": all_names + derived,
-        "no_ply+derived": no_ply + derived,
     }
 
 
@@ -99,7 +98,7 @@ def make_model(kind: str, seed: int, trees: int) -> Pipeline:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=type(DATASET_PATH), default=DATASET_PATH)
+    parser.add_argument("--dataset", type=Path, default=DATASET_PATH)
     parser.add_argument("--sample", type=int, default=80_000)
     parser.add_argument("--trees", type=int, default=150)
     parser.add_argument("--seed", type=int, default=42)

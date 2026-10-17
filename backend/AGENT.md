@@ -42,12 +42,17 @@ backend/
 │   └── moves.csv           # Dataset mentah (gitignored)
 └── tests/
     ├── __init__.py
-    ├── test_api.py             # Test endpoint API (5 test)
+    ├── test_api.py             # Test endpoint API + batas input (12 test)
     ├── test_features.py        # Test ekstraksi fitur FEN (7 test)
     ├── test_pawn_structure.py  # Test pola struktur pion (8 test)
-    ├── test_move_analysis.py   # Test endpoint analisis langkah / ambang (6 test)
-    └── test_model_behavior.py  # Karakterisasi model di posisi skakmat (5 test)
+    ├── test_move_analysis.py   # Test endpoint analisis langkah / ambang (7 test)
+    ├── test_best_move.py       # Test endpoint best-move (7 test)
+    ├── test_engine_lifecycle.py # Race spawn & proses yatim, engine stub (3 test)
+    ├── test_model_behavior.py  # Karakterisasi model di posisi skakmat (4 test)
+    └── test_training.py        # Smoke test training + pengawas metrik (3 test)
 ```
+
+Total: **51 test**.
 
 Catatan struktur: demi mudah dipahami tanpa lompat file, sisi HTTP terkumpul di
 `app/api.py` (skema → classifier → endpoint → app factory) dan sisi ML di
@@ -62,7 +67,7 @@ Base URL dev: `http://localhost:8000`.
 | `GET /api/health` | `200 {"status":"ok"}` | — |
 | `POST /api/classify` | `200` (lihat bawah) | `422` FEN invalid / body salah, `503` model belum ada |
 | `POST /api/analyze-move` | `200` (lihat bawah) | `422` FEN/posisi/langkah tidak valid, `503` engine belum ada |
-| `POST /api/best-move` | `200 {"move_uci","model_version"}` | `422` FEN/posisi/skakmat, `503` engine belum ada |
+| `POST /api/best-move` | `200 {"move_uci","model_version"}` | `422` FEN/posisi/tidak ada langkah legal, `503` engine belum ada |
 
 Respons `/api/classify`:
 
@@ -197,23 +202,25 @@ uv run pytest
 
 ## Hasil training terakhir
 
-Model default (sampel 200k baris, 200 pohon, seed 42):
+Model default (sampel 200k baris, 200 pohon, seed 42) — **tanpa fitur waktu**:
 
 - Split: train 160.153 baris / 38.417 game, test 39.842 baris / 9.605 game.
-- Akurasi test: **~0.9999**; log_loss ~0.0028; baseline mayoritas ~0.537.
-- Akurasi dedup FEN: ~0.9999.
-- Fitur paling penting: `fullmove_number`, `ply`, `material_total`,
-  `material_black`, `material_white`.
+- Akurasi test: **~0.944**; log_loss ~0.164; baseline mayoritas ~0.537.
+- Akurasi dedup FEN (buang test yang juga ada di train, lalu dedup):
+  **~0.937** (n = 35.575, dari 35.653 baris unseen).
+- Fitur paling penting: `material_total`, `castling_rights`, `material_white`,
+  `piece_count_total`, `material_black`.
 - Artifact: `models/model.joblib` dan `models/metrics.json` (keduanya gitignored).
 
-Catatan: ini hasil setelah penambahan fitur pola struktur pion. Fitur pion belum
-masuk Top-10 karena `ply`/material masih dominan — diharapkan lebih berguna pada
-masalah yang sifatnya posisional (mis. tema puzzle), bukan fase.
+Kenapa angkanya jauh lebih rendah dari sebelumnya (~0.9999)? Karena `ply`,
+`fullmove_number` dan `halfmove_clock` **dibuang** (BE-005). Ketiga kolom
+itulah yang aturan pelabelan `phase` pakai, jadi selama fitur itu ada model
+hanya memulihkan aturan — angka 0.9999 tidak pernah mengukur kualitas model.
 
-Catatan penting: akurasi yang sangat tinggi ini **bukan** ukuran "kecerdasan"
-model, melainkan indikasi bahwa definisi `phase` pada dataset sangat
-deterministik (dominan oleh nomor langkah + material). Ini konsisten dengan
-pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
+Catatan penting: `phase` pada dataset memang sangat deterministik dari
+material + nomor langkah. Bagian nomor langkah tidak boleh dipakai, jadi
+sisanya ada di material — konsisten dengan pembahasan desain dan perlu
+dijelaskan bila melaporkan metrik.
 
 ## Status milestone
 
@@ -222,7 +229,7 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 | M0 | FEN generator + endpoint echo | Selesai (digantikan endpoint classify nyata) |
 | M1 | Feature + labeling + train + model | Selesai |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Selesai (frontend sudah terpasang) |
-| M3 | Test + evaluasi model | 31 test hijau (API/fitur/pola pion/perilaku/analisis langkah); metrik dilaporkan |
+| M3 | Test + evaluasi model | 51 test hijau (API/batas input, fitur, pola pion, perilaku model, analisis langkah, best-move, siklus engine, training); metrik dilaporkan |
 | M4 | Rapikan struktur backend | Selesai: 2 modul inti (`app/api.py` + `app/ml.py`), entrypoint `train.py` |
 | M5 | Fitur pola struktur pion | Selesai: 8 fitur + `tests/test_pawn_structure.py` |
 | M6 | Analisis langkah (engine Stockfish) | Selesai: `/api/analyze-move` + `tests/test_move_analysis.py` |
@@ -232,22 +239,25 @@ pembahasan desain dan perlu dijelaskan bila melaporkan metrik.
 
 - `models/` hanya berisi `.gitkeep`; model harus dilatih ulang (`uv run python train.py`).
 - `datasets/` dan artifact model **tidak** di-commit karena ukurannya besar.
-- `halfmove_clock` dari frontend bisa selalu `0` (lihat PLANNING.md); fitur ini
-  ada tapi tidak boleh diandalkan.
+- `halfmove_clock` dari frontend bisa selalu `0` (lihat PLANNING.md). Kolom itu
+  sudah **tidak** dipakai sebagai fitur (label leakage, BE-005), jadi ketidak-
+  akuratannya tidak berdampak — tapi jangan dipakai sebagai bahan latih ulang
+  tanpa memperbaiki sisi frontend.
 - `fastapi.testclient` memunculkan `StarletteDeprecationWarning` soal `httpx`;
   belum berdampak, pantau saat upgrade.
 - Test `test_features.py` sudah mencakup fitur; `tests/test_pawn_structure.py`
   mencakup pola pion. Loader dataset (streaming/sampling) di `app/ml.py` belum
   punya test khusus.
 - `app/experiment.py` (utility non-produksi) untuk membandingkan set fitur &
-  algoritma: `uv run python -m app.experiment`. Hasilnya: fitur non-ply /
-  algoritma lain tidak mengubah label posisi OOD — akar masalah di definisi label.
+  algoritma: `uv run python -m app.experiment`. Hasilnya: membuang fitur
+  giliran / mengganti algoritma tidak mengubah label posisi OOD — akar masalah
+  di definisi label.
 - **Temuan: label `phase` vs skakmat.** Model mengklasifikasi fase berdasarkan
   nomor langkah/material; skakmat bisa terjadi di fase mana pun, sehingga
   posisi skakmat tetap dapat berlabel `middlegame` (per definisi dataset).
   `tests/test_model_behavior.py` mengunci perilaku ini. Keputusan "game over"
   adalah produk/UX, belum ditentukan.
-- **Batasan OOD model.** Posisi material rendah dengan `fullmove_number` kecil
+- **Batasan OOD model.** Posisi dengan material rendah dan nomor langkah kecil
   (tidak ada di dataset) diekstrapolasi ke default `middlegame`. Fitur yang
   lebih tahan OOD adalah kandidat revisi di masa depan.
 

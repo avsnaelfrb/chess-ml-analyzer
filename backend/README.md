@@ -19,7 +19,7 @@ backend/
 ├── bin/                    # biner engine Stockfish (gitignored)
 ├── models/                 # artifact model.joblib + metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
-└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_model_behavior
+└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_engine_lifecycle, test_model_behavior, test_training
 ```
 
 ## Menjalankan
@@ -115,6 +115,10 @@ Respons:
   opening yang sama banyak terulang antar-game.
 - **Dataset.** Label diambil apa adanya dari kolom `phase`; tidak ada heuristik
   label buatan sendiri (lihat `app/ml.py`).
+- **Tanpa fitur waktu.** `ply` / `fullmove_number` / `halfmove_clock` tidak
+  dipakai: kolom itulah yang aturan pelabelan `phase` pakai, jadi memakainya
+  membuat model hanya memulihkan aturan (label leakage). Setelah dibuang,
+  akurasi test ~0.944 — angka yang jujur, bukan ~0.9999.
 - **Analisis langkah = engine, bukan ML.** Label `move_quality` di dataset
   timpang (99,35% Good) dan hanya ambang `cp_loss`, jadi kualitas dihitung
   Stockfish langsung — bukan dilatih.

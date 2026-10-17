@@ -106,9 +106,6 @@ def _build_feature_names() -> tuple[str, ...]:
         "major_count_total",
         "minor_count_total",
         "side_to_move_white",
-        "ply",
-        "fullmove_number",
-        "halfmove_clock",
         "castling_rights",
         "has_en_passant",
     ]
@@ -219,9 +216,9 @@ def extract_features(fen: str) -> dict[str, float]:
         piece_count_total += piece_count
         pawn_count_total += pawn_count
 
-    fullmove = int(board.fullmove_number)
-    ply = (fullmove - 1) * 2 + (0 if board.turn == chess.WHITE else 1)
-
+    # Fitur posisi-saja: sengaja TIDAK memakai ply / fullmove_number /
+    # halfmove_clock. Kolom-kolom itulah yang aturan pelabelan `phase` pakai,
+    # jadi memasukkannya membuat model hanya memulihkan aturan (label leakage).
     features.update(pawn_structure_features(board))
     features["material_total"] = float(material_total)
     features["piece_count_total"] = float(piece_count_total)
@@ -229,11 +226,8 @@ def extract_features(fen: str) -> dict[str, float]:
     features["major_count_total"] = float(major_total)
     features["minor_count_total"] = float(minor_total)
     features["side_to_move_white"] = 1.0 if board.turn == chess.WHITE else 0.0
-    features["ply"] = float(ply)
-    features["fullmove_number"] = float(fullmove)
-    features["halfmove_clock"] = float(board.halfmove_clock)
     features["castling_rights"] = float(bin(int(board.castling_rights)).count("1"))
-    features["has_en_passant"] = 0.0 if board.ep_square is None else 1.0
+    features["has_en_passant"] = 0.0 if not board.has_legal_en_passant() else 1.0
     return features
 
 
@@ -436,13 +430,17 @@ def main(argv: list[str] | None = None) -> int:
     y_proba = pipeline.predict_proba(X[test_idx])
     metrics = evaluate(y[test_idx], y_pred, y_proba, list(pipeline.classes_))
 
-    # Evaluasi versi dedup FEN (metrik lebih jujur terhadap posisi duplikat).
+    # Metrik "jujur": buang baris test yang FEN-nya juga muncul di train
+    # (posisi berulang antar-game membuat angka akurasi membengkak), lalu dedup.
+    train_fens = set(X[train_idx])
     test_frame = pd.DataFrame({FEN_COLUMN: X[test_idx], LABEL_COLUMN: y[test_idx]})
-    dedup = test_frame.drop_duplicates(subset=[FEN_COLUMN])
+    novel = test_frame[~test_frame[FEN_COLUMN].isin(train_fens)]
+    dedup = novel.drop_duplicates(subset=[FEN_COLUMN])
     dedup_pred = pipeline.predict(dedup[FEN_COLUMN].to_numpy())
-    dedup_acc = float(accuracy_score(dedup[LABEL_COLUMN], dedup_pred))
+    dedup_acc = float(accuracy_score(dedup[LABEL_COLUMN], dedup_pred)) if len(dedup) else 0.0
     metrics["dedup_accuracy"] = dedup_acc
     metrics["dedup_test_size"] = int(len(dedup))
+    metrics["unseen_test_size"] = int(len(novel))
 
     # Baseline: tebak kelas mayoritas di train.
     train_majority = pd.Series(y[train_idx]).mode()[0]
@@ -477,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # Tulis ke file sementara lalu ganti, agar artifact lama tidak rusak bila
     # proses berhenti di tengah penulisan.
+    # Versi disematkan di artifact supaya API menyajikan versi yang benar-benar
+    # dilatih, bukan konstanta env yang bisa basi.
+    pipeline.model_version_ = MODEL_VERSION
     args.output.parent.mkdir(parents=True, exist_ok=True)
     tmp_model = args.output.with_name(args.output.name + ".tmp")
     joblib.dump(pipeline, tmp_model)

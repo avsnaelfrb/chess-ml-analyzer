@@ -13,8 +13,11 @@ from app.ml import (
 )
 
 START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-# Setelah 1.e4: giliran hitam, en passant e3.
+# Setelah 1.e4: giliran hitam, en passant e3 (tapi tak ada pion hitam yang
+# bisa menangkap, jadi en passant legal = tidak ada).
 AFTER_E4_FEN = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+# Setelah 1.e4 d5 2.e5 f5: putih bisa menangkap en passant f5-f6 (ep square f6).
+EP_LEGAL_FEN = "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3"
 
 
 def test_start_position_features() -> None:
@@ -27,28 +30,26 @@ def test_start_position_features() -> None:
     assert features["white_queen"] == 1
     assert features["black_queen"] == 1
     assert features["side_to_move_white"] == 1.0
-    assert features["ply"] == 0.0
-    assert features["fullmove_number"] == 1.0
     assert features["castling_rights"] == 4.0
     assert features["has_en_passant"] == 0.0
 
 
-def test_en_passant_and_turn_detected() -> None:
-    features = extract_features(AFTER_E4_FEN)
-    assert features["has_en_passant"] == 1.0
-    assert features["side_to_move_white"] == 0.0
-    assert features["ply"] == 1.0  # hitam jalan, fullmove 1
+def test_time_features_absent_because_label_leakage() -> None:
+    """BE-005: ply/fullmove/halfmove yang aturan label `phase` pakai tidak
+    boleh jadi fitur — model harus menebak fase dari posisi, bukan aturan."""
+    features = extract_features(START_FEN)
+    assert "ply" not in features
+    assert "fullmove_number" not in features
+    assert "halfmove_clock" not in features
+    assert all(name not in FEATURE_NAMES for name in ("ply", "fullmove_number", "halfmove_clock"))
 
 
-@pytest.mark.parametrize(
-    ("fen", "expected_ply"),
-    [
-        ("8/8/8/8/8/8/8/8 w - - 0 5", 8.0),
-        ("8/8/8/8/8/8/8/8 b - - 0 5", 9.0),
-    ],
-)
-def test_ply_derived_from_fullmove_and_side(fen: str, expected_ply: float) -> None:
-    assert extract_features(fen)["ply"] == expected_ply
+def test_en_passant_only_when_capture_legal() -> None:
+    # ep_square terisi tapi tak ada penangkap legal -> dianggap tidak ada.
+    assert extract_features(AFTER_E4_FEN)["has_en_passant"] == 0.0
+    assert extract_features(AFTER_E4_FEN)["side_to_move_white"] == 0.0
+    # ep_square terisi dan pion putih e5 bisa menangkap di f6.
+    assert extract_features(EP_LEGAL_FEN)["has_en_passant"] == 1.0
 
 
 def test_castling_rights_count() -> None:
