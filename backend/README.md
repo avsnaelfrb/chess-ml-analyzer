@@ -19,7 +19,7 @@ backend/
 ├── bin/                    # biner engine Stockfish (gitignored)
 ├── models/                 # artifact model.joblib + metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
-└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_model_behavior, test_training
+└── tests/                  # test_api, test_features, test_pawn_structure, test_move_analysis, test_best_move, test_engine_lifecycle, test_model_behavior, test_training
 ```
 
 ## Menjalankan
