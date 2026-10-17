@@ -140,6 +140,38 @@ Aturan:
 - `fen_before` tidak valid / posisi ilegal / langkah ilegal → `422` `{ "detail": "..." }`.
 - Engine belum tersedia (biner hilang) → `503` `{ "detail": "..." }`.
 
+### `POST /api/best-move`
+
+Langkah terbaik untuk mode **vs bot**. Pilihan bot = engine **Stockfish**,
+bukan model ML (lihat non-goal bagian 12).
+
+Request (JSON):
+
+```json
+{ "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1" }
+```
+
+Response `200`:
+
+```json
+{ "move_uci": "c7c5", "model_version": "Stockfish 19" }
+```
+
+Aturan:
+
+- `fen` = posisi giliran yang harus melangkah (6 field FEN, posisi legal).
+- `move_uci` selalu langkah **legal** pada `fen`; format UCI huruf kecil,
+  promosi `q`/`r`/`b`/`n` bila perlu.
+- `model_version` = nama engine, sama seperti `/api/analyze-move`.
+- FEN tidak valid / posisi ilegal / **tidak ada langkah legal** → `422`
+  `{ "detail": "..." }`. Yang ditolak hanya posisi tanpa langkah sama sekali
+  (skakmat/remis mati); remis material tidak cukup, 75-langkah atau 5-fold
+  **tetap** menghasilkan langkah.
+- Engine belum tersedia (biner hilang) → `503` `{ "detail": "..." }`.
+
+Batas input berlaku untuk semua endpoint: `fen` maks 200 karakter,
+`move_uci` maks 5 karakter, badan request maks 64 KB (lebih → `413`).
+
 ## 5. Status terkini
 
 | Area | Status | Catatan |
@@ -148,11 +180,12 @@ Aturan:
 | Integrasi fase frontend | ✅ Selesai | `src/api/classify.ts`, `AnalysisPanel`, proxy `/api` |
 | Endpoint fase (`/api/health`, `/api/classify`) | 🔒 Beku | FastAPI, sesuai bagian 3 |
 | Struktur backend | ✅ Dirapikan | 2 modul inti `app/api.py` + `app/ml.py`; entrypoint `train.py` |
-| Model fase | ✅ Latih ulang | +8 fitur pola struktur pion; akurasi test ~0.9999 |
+| Model fase | ✅ Latih ulang | Tanpa fitur waktu (BE-005); akurasi test ~0.944, baseline ~0.537 |
 | Dataset | ✅ Tersedia | `moves.csv` (3,18 jt baris) + `puzzles.csv` (1.176 baris) |
-| Test backend | ✅ Hijau | 31 test (API 5, fitur 7, pola pion 8, perilaku model 5, analisis langkah 6) |
+| Test backend | ✅ Hijau | 39 test (API 5, fitur 7, pola pion 8, perilaku model 4, analisis langkah 6, best-move 6, training 3) |
 | Katalog label (dua dataset) | ✅ Terdokumentasi | Bagian 7 |
 | Analisis langkah (`/api/analyze-move`) | ✅ Selesai (engine) | Stockfish; kontrak di bagian 4 |
+| Langkah bot (`/api/best-move`) | ✅ Selesai (engine) | Mode vs bot; kontrak di bagian 4 |
 
 **Implikasi untuk frontend:** integrasi fase tidak berubah. Frontend sudah
 mengirim **`fen_before` + `move_uci`** dan menampilkan hasil analisis langkah
@@ -225,16 +258,19 @@ terbesar. Kandidat berikutnya (tema taktis) dicatat sebagai rencana lanjutan.
   `Pipeline` yang juga memuat ekstraksi fitur dari FEN.
 - Fitur: turunan FEN — material & jumlah bidak, jumlah tiap jenis bidak, pola
   **struktur pion** (dobel/terisolasi/passed/pulau) per warna, giliran,
-  `ply`/`fullmove_number`, hak rokade, en passant.
-- **Anti-leakage:** split per `game_id`, plus metrik tambahan pada FEN unik.
+  hak rokade, en passant. Sengaja **tanpa** `ply` / `fullmove_number` /
+  `halfmove_clock`: kolom itulah yang aturan pelabelan `phase` pakai, jadi
+  memakainya = label leakage (lihat risiko bagian 13).
+- **Anti-leakage:** split per `game_id`, plus metrik tambahan pada FEN unik yang
+  tidak muncul di train.
 - Artifact: `backend/models/model.joblib` (gitignored), dimuat saat server start.
-- Baseline (sampel 200k): akurasi test ~0.9999 vs baseline mayoritas ~0.537.
-  Akurasi tinggi karena label `phase` memang deterministik (nomor langkah +
-  material) — **bukan** ukuran kecerdasan model.
+- Baseline (sampel 200k): akurasi test **~0.944** vs baseline mayoritas ~0.537;
+  dedup ~0.937. Angka turun dari ~0.9999 setelah fitur waktu dibuang — dan
+  ~0.9999 itu memang bukan ukuran kecerdasan model.
 
-Catatan: mengganti fitur (buang `ply`) atau algoritma (RF/HGB/LogReg) **tidak**
-mengubah label posisi OOD (mis. K+Q mate di `fullmove 1` tetap `middlegame`).
-Akar masalahnya definisi label, bukan fitur/model.
+Catatan: mengganti algoritma (RF/HGB/LogReg) **tidak** mengubah label posisi
+OOD (mis. K+Q mate di `fullmove 1` tetap `middlegame`) — bahkan fitur waktu
+sekalipun. Akar masalahnya definisi label, bukan fitur/model.
 
 ## 9. Tanggung jawab frontend
 
@@ -299,8 +335,9 @@ backend/
 - Framework: FastAPI + uvicorn + pydantic. Manajemen paket: `uv`.
 - Struktur sengaja **ringkas (2 modul inti):** `app/api.py` = skema → classifier
   → endpoint → app factory; `app/ml.py` = label → fitur → dataset → training.
-- Rencana analisis langkah akan menambah endpoint & (kemungkinan) artifact model
-  baru. Bila ditambahkan, tetap pisahkan dari alur fase yang beku.
+- Analisis langkah & langkah bot sudah ditambahkan tanpa menyentuh alur fase
+  yang beku: `app/api.py` menampung `MoveAnalyzer` (engine Stockfish) terpisah
+  dari `PhaseClassifier` (model ML).
 
 ## 11. Milestone
 
@@ -309,7 +346,7 @@ backend/
 | M0 | FEN generator + endpoint echo | Frontend kirim FEN, backend balas FEN sama | ✅ (digantikan classify nyata) |
 | M1 | Feature + labeling + train + model fase | `/api/classify` balas salah satu dari 3 label | ✅ |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | ✅ |
-| M3 | Test + evaluasi model | 25 test hijau; metrik ada | ✅ |
+| M3 | Test + evaluasi model | 39 test hijau; metrik ada | ✅ |
 | M4 | Rapikan struktur backend | 2 modul inti (`app/api.py` + `app/ml.py`) | ✅ |
 | M5 | Fitur pola struktur pion | 8 fitur + 8 test | ✅ |
 | M6 | Katalog label dari dua dataset | Bagian 7 dokumen ini | ✅ |
@@ -326,7 +363,7 @@ backend/
 - Memprediksi langkah terbaik (policy) **sebagai model ML** — model hanya
   **menilai** langkah yang sudah dimainkan. Pengecualian: mode **vs bot** memilih
   langkah lewat engine **Stockfish** (bukan model ML); kontraknya di
-  `backend/BOT.md` + `frontend/BOT.md`.
+  `backend/BOT.md` + `frontend/BOT.md`, ringkasnya di bagian 4 dokumen ini.
 
 ## 13. Risiko & catatan
 
