@@ -53,6 +53,9 @@ MATE_SCORE = 10_000  # centipawn pengganti skor skakmat
 # longgar. `move_uci` paling panjang 5 (4 petak + huruf promosi).
 MAX_FEN_LENGTH = 200
 MAX_MOVE_UCI_LENGTH = 5
+# shortcut: batas badan 64 KB membatasi DoS memori sekaligus membatasi ukuran
+# 422 dari pydantic (yang memantulkan input). Naikkan kalau nanti ada endpoint
+# dengan badan besar (mis. batch upload).
 MAX_BODY_BYTES = 64 * 1024
 
 # Batas angka langkah yang masuk akal. Nilai ekstrem membuat Stockfish
