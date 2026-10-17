@@ -51,6 +51,17 @@ def test_best_move_without_engine_returns_503() -> None:
     assert response.status_code == 503
 
 
+def test_best_move_absurd_fullmove_returns_422_before_engine() -> None:
+    """BE-003: nomor langkah gila dulu membunuh Stockfish -> 503 + respawn.
+
+    Engine sengaja dipasang tak ada: bila lolos validasi, hasilnya pasti 503,
+    jadi 422 membuktikan input ditolak sebelum engine disentuh.
+    """
+    client = _client(MoveAnalyzer(engine_path=MISSING_ENGINE))
+    fen = START_FEN.rsplit(" ", 1)[0] + " 99999"
+    assert client.post("/api/best-move", json={"fen": fen}).status_code == 422
+
+
 @pytest.mark.skipif(not _engine_available(), reason="biner Stockfish belum tersedia")
 def test_best_move_insufficient_material_still_plays() -> None:
     # Raja vs Raja: is_game_over() True (material tidak cukup) TAPI ada langkah legal.
