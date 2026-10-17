@@ -67,6 +67,9 @@ MAX_HALFMOVE_CLOCK = 9_999
 # raksasa tidak membanjiri terminal dan tidak membuka injeksi baris log.
 LOG_SNIPPET_LIMIT = 300
 
+# Posisi awal — dipakai sebagai smoke predict saat artifact dimuat.
+_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
 
 def _parse_board(fen: str, label: str = "fen") -> chess.Board:
     """Parse FEN sekali, sekalian jaga batas input (trust boundary).
@@ -229,6 +232,19 @@ class PhaseClassifier:
                 "Objek di %s bukan estimator dengan predict_proba; "
                 "/api/classify mengembalikan 503.",
                 path,
+            )
+            return cls(None)
+        try:
+            # Smoke predict: artifact lama dengan jumlah fitur berbeda (mis. hasil
+            # BE-005) tetap bisa di-load, tapi gagal di tiap request — dan errornya
+            # terbaca sebagai 422 palsu. Lebih baik ditangkap sekali di sini.
+            model.predict_proba([_START_FEN])
+        except Exception as exc:
+            logger.error(
+                "Artifact di %s tidak cocok dengan kode fitur saat ini: %s. "
+                "/api/classify mengembalikan 503; jalankan ulang training.",
+                path,
+                exc,
             )
             return cls(None)
         logger.info("Model dimuat dari %s", path)
