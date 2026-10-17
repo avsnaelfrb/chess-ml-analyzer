@@ -182,7 +182,7 @@ Batas input berlaku untuk semua endpoint: `fen` maks 200 karakter,
 | Struktur backend | ✅ Dirapikan | 2 modul inti `app/api.py` + `app/ml.py`; entrypoint `train.py` |
 | Model fase | ✅ Latih ulang | Tanpa fitur waktu (BE-005); akurasi test ~0.944, baseline ~0.537 |
 | Dataset | ✅ Tersedia | `moves.csv` (3,18 jt baris) + `puzzles.csv` (1.176 baris) |
-| Test backend | ✅ Hijau | 50 test (API+batas input 11, fitur 7, pola pion 8, perilaku model 4, analisis langkah 7, best-move 7, siklus engine 3, training 3) |
+| Test backend | ✅ Hijau | 51 test (API+batas input 12, fitur 7, pola pion 8, perilaku model 4, analisis langkah 7, best-move 7, siklus engine 3, training 3) |
 | Katalog label (dua dataset) | ✅ Terdokumentasi | Bagian 7 |
 | Analisis langkah (`/api/analyze-move`) | ✅ Selesai (engine) | Stockfish; kontrak di bagian 4 |
 | Langkah bot (`/api/best-move`) | ✅ Selesai (engine) | Mode vs bot; kontrak di bagian 4 |
@@ -346,7 +346,7 @@ backend/
 | M0 | FEN generator + endpoint echo | Frontend kirim FEN, backend balas FEN sama | ✅ (digantikan classify nyata) |
 | M1 | Feature + labeling + train + model fase | `/api/classify` balas salah satu dari 3 label | ✅ |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | ✅ |
-| M3 | Test + evaluasi model | 50 test hijau; metrik ada | ✅ |
+| M3 | Test + evaluasi model | 51 test hijau; metrik ada | ✅ |
 | M4 | Rapikan struktur backend | 2 modul inti (`app/api.py` + `app/ml.py`) | ✅ |
 | M5 | Fitur pola struktur pion | 8 fitur + 8 test | ✅ |
 | M6 | Katalog label dari dua dataset | Bagian 7 dokumen ini | ✅ |

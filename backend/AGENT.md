@@ -42,7 +42,7 @@ backend/
 │   └── moves.csv           # Dataset mentah (gitignored)
 └── tests/
     ├── __init__.py
-    ├── test_api.py             # Test endpoint API + batas input (11 test)
+    ├── test_api.py             # Test endpoint API + batas input (12 test)
     ├── test_features.py        # Test ekstraksi fitur FEN (7 test)
     ├── test_pawn_structure.py  # Test pola struktur pion (8 test)
     ├── test_move_analysis.py   # Test endpoint analisis langkah / ambang (7 test)
@@ -52,7 +52,7 @@ backend/
     └── test_training.py        # Smoke test training + pengawas metrik (3 test)
 ```
 
-Total: **50 test**.
+Total: **51 test**.
 
 Catatan struktur: demi mudah dipahami tanpa lompat file, sisi HTTP terkumpul di
 `app/api.py` (skema → classifier → endpoint → app factory) dan sisi ML di
@@ -229,7 +229,7 @@ dijelaskan bila melaporkan metrik.
 | M0 | FEN generator + endpoint echo | Selesai (digantikan endpoint classify nyata) |
 | M1 | Feature + labeling + train + model | Selesai |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Selesai (frontend sudah terpasang) |
-| M3 | Test + evaluasi model | 50 test hijau (API/batas input, fitur, pola pion, perilaku model, analisis langkah, best-move, siklus engine, training); metrik dilaporkan |
+| M3 | Test + evaluasi model | 51 test hijau (API/batas input, fitur, pola pion, perilaku model, analisis langkah, best-move, siklus engine, training); metrik dilaporkan |
 | M4 | Rapikan struktur backend | Selesai: 2 modul inti (`app/api.py` + `app/ml.py`), entrypoint `train.py` |
 | M5 | Fitur pola struktur pion | Selesai: 8 fitur + `tests/test_pawn_structure.py` |
 | M6 | Analisis langkah (engine Stockfish) | Selesai: `/api/analyze-move` + `tests/test_move_analysis.py` |
