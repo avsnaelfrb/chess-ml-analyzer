@@ -243,8 +243,12 @@ sebelum diserahkan ke engine; klasifikasikan error input sebagai `422`.
 - **Bukti:** commit `01847ea`, test `34518ec`.
   `joblib.load` dibungkus `try/except Exception` → `cls(None)` (log error, server
   tetap hidup), plus guard `hasattr(model, "predict_proba")` untuk artifact yang
-  ter-load tapi bukan estimator. Test: file sampah dan `dict` keduanya →
-  `ready is False` (`/api/classify` `503`).
+  ter-load tapi bukan estimator. Ditambah **smoke predict** satu posisi awal saat
+  load: menangkap artifact lama yang jumlah fiturnya beda dari kode (mis. akibat
+  BE-005) — tanpa itu artifact tetap "ready" lalu tiap request gagal dan sklearn
+  melempar `ValueError` yang terbaca sebagai **422 palsu**. Test: file sampah,
+  `dict`, dan pipeline dengan jumlah fitur tak cocok → `ready is False`
+  (`/api/classify` `503`).
 
 ### Apa ini
 
@@ -481,7 +485,7 @@ training kecil + test parity akurasi; simpan versi di artifact dan baca saat loa
 - **Bukti:** commit `d28c2cc`, `a31e184`, `36f8cd4`, `e16dc34`.
   - `PLANNING.md` bagian 4 kini memuat seksi **`POST /api/best-move`** lengkap
     dengan aturan 422 (hanya tanpa langkah legal) + batas input; baris status
-    (`:151-156`) dan milestone M3 (`:312`) dihitung ulang → **50 test**.
+    (`:151-156`) dan milestone M3 (`:312`) dihitung ulang → **51 test**.
   - `backend/AGENT.md` struktur test lengkap (7 file, jumlah per file, total 50)
     dan M3; `backend/README.md` daftar file test ikut.
   - **`BOT.md` dipulihkan, bukan dihapus** — setelah file kembali di working
