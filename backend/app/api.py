@@ -21,9 +21,9 @@ from typing import Any, Literal
 import chess
 import chess.engine
 import joblib
-import numpy as np
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import (
@@ -49,6 +49,58 @@ MOVE_QUALITIES: tuple[MoveQualityLabel, ...] = (
 )
 MATE_SCORE = 10_000  # centipawn pengganti skor skakmat
 
+# Batas input (trust boundary). FEN asli panjangnya ~70 karakter; 200 masih
+# longgar. `move_uci` paling panjang 5 (4 petak + huruf promosi).
+MAX_FEN_LENGTH = 200
+MAX_MOVE_UCI_LENGTH = 5
+MAX_BODY_BYTES = 64 * 1024
+
+# Batas angka langkah yang masuk akal. Nilai ekstrem membuat Stockfish
+# exit(1); pada fitur lama int 308+ digit juga membuat float() overflow.
+MAX_FULLMOVE_NUMBER = 9_999
+MAX_HALFMOVE_CLOCK = 9_999
+
+# Potongan payload yang dicatat ke log (sudah disanitasi), supaya payload
+# raksasa tidak membanjiri terminal dan tidak membuka injeksi baris log.
+LOG_SNIPPET_LIMIT = 300
+
+
+def _parse_board(fen: str, label: str = "fen") -> chess.Board:
+    """Parse FEN sekali, sekalian jaga batas input (trust boundary).
+
+    Angka langkah yang tidak masuk akal diblok di sini: Stockfish menutup
+    dirinya (exit 1) pada nilai ekstrem, dan int ekstrem membuat ``float()``
+    overflow pada ekstraksi fitur.
+
+    Raises:
+        ValueError: FEN tidak bisa diparse atau angka langkah melebihi batas.
+    """
+    try:
+        board = chess.Board(fen)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"{label} tidak valid: {exc}") from exc
+    if board.fullmove_number > MAX_FULLMOVE_NUMBER:
+        raise ValueError(
+            f"{label}: fullmove_number melebihi batas {MAX_FULLMOVE_NUMBER}"
+        )
+    if board.halfmove_clock > MAX_HALFMOVE_CLOCK:
+        raise ValueError(
+            f"{label}: halfmove_clock melebihi batas {MAX_HALFMOVE_CLOCK}"
+        )
+    return board
+
+
+def _snippet(data: bytes, limit: int = LOG_SNIPPET_LIMIT) -> str:
+    """Ringkas payload untuk log: buang baris palsu + potong.
+
+    Mencegah dua hal: injeksi baris log (karakter ``\\n`` di input pengguna)
+    dan terminal yang dipenuhi payload raksasa.
+    """
+    text = data.decode(errors="replace").replace("\r", "").replace("\n", "\\n")
+    if len(text) > limit:
+        return f"{text[:limit]}… (+{len(text) - limit} char)"
+    return text or "-"
+
 
 # ============================== Skema kontrak API ==============================
 
@@ -56,6 +108,7 @@ class ClassifyRequest(BaseModel):
     fen: str = Field(
         ...,
         min_length=1,
+        max_length=MAX_FEN_LENGTH,
         description="Posisi papan dalam notasi FEN.",
         examples=["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"],
     )
@@ -78,12 +131,14 @@ class AnalyzeMoveRequest(BaseModel):
     fen_before: str = Field(
         ...,
         min_length=1,
+        max_length=MAX_FEN_LENGTH,
         description="Posisi papan sebelum langkah dimainkan (FEN).",
         examples=["rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"],
     )
     move_uci: str = Field(
         ...,
         min_length=4,
+        max_length=MAX_MOVE_UCI_LENGTH,
         description="Langkah dalam notasi UCI (petak asal+tujuan + huruf promosi bila ada).",
         examples=["d2d4", "e7e8q", "b7b8n"],
     )
@@ -107,6 +162,7 @@ class BestMoveRequest(BaseModel):
     fen: str = Field(
         ...,
         min_length=1,
+        max_length=MAX_FEN_LENGTH,
         description="Posisi giliran yang harus melangkah (FEN).",
         examples=["rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"],
     )
@@ -155,9 +211,28 @@ class PhaseClassifier:
                 path,
             )
             return cls(None)
-        model = joblib.load(path)
+        try:
+            model = joblib.load(path)
+        except Exception as exc:  # artifact korup / sklearn tak kompatibel
+            logger.error(
+                "Gagal memuat model dari %s: %s. /api/classify mengembalikan 503; "
+                "jalankan ulang training.",
+                path,
+                exc,
+            )
+            return cls(None)
+        if not hasattr(model, "predict_proba"):
+            logger.error(
+                "Objek di %s bukan estimator dengan predict_proba; "
+                "/api/classify mengembalikan 503.",
+                path,
+            )
+            return cls(None)
         logger.info("Model dimuat dari %s", path)
-        return cls(model)
+        # Versi disematkan saat training supaya versi yang disajikan selalu
+        # mengikuti artifact, bukan konstanta env yang bisa basi.
+        version = str(getattr(model, "model_version_", MODEL_VERSION))
+        return cls(model, model_version=version)
 
     def predict(self, fen: str) -> Prediction:
         if self._model is None:
@@ -245,11 +320,18 @@ class MoveAnalyzer:
                 self.model_version = name
         return self._engine
 
-    def analyze(self, fen_before: str, move_uci: str) -> MoveAnalysis:
+    def _discard_engine(self) -> None:
+        """Tutup lalu buang engine supaya prosesnya tidak jadi yatim."""
+        engine, self._engine = self._engine, None
+        if engine is None:
+            return
         try:
-            board = chess.Board(fen_before)  # ValueError bila FEN tidak valid
-        except ValueError as exc:
-            raise ValueError(f"fen_before tidak valid: {exc}") from exc
+            engine.quit()
+        except Exception:  # proses sudah mati / transport rusak
+            pass
+
+    def analyze(self, fen_before: str, move_uci: str) -> MoveAnalysis:
+        board = _parse_board(fen_before, "fen_before")
         if not board.is_valid():
             # Mis. pihak yang tidak jalan sedang diskak; engine UCI menolak ini.
             raise ValueError("posisi fen_before tidak legal")
@@ -261,49 +343,53 @@ class MoveAnalyzer:
         if move not in board.legal_moves:
             raise ValueError("move_uci bukan langkah legal dari fen_before")
 
-        engine = self._ensure_engine()
         limit = chess.engine.Limit(depth=self._depth)
         mover = board.turn
         try:
+            # Spawn dilakukan DI DALAM lock supaya cold start bersamaan tidak
+            # membuka banyak proses engine (yang sisanya bocor).
             with self._lock:
+                engine = self._ensure_engine()
                 before = engine.analyse(board, limit)
                 board.push(move)
                 after = engine.analyse(board, limit)
                 board.pop()
         except chess.engine.EngineError as exc:
-            # Engine mati: buang agar request berikutnya memulai proses baru.
-            self._engine = None
+            # Engine mati: tutup prosesnya lalu buang, request berikutnya spawn baru.
+            with self._lock:
+                self._discard_engine()
             raise ModelNotLoadedError(f"Engine gagal menganalisis: {exc}") from exc
 
         cp_loss = max(0.0, _score_cp(before, mover) - _score_cp(after, mover))
         return MoveAnalysis(cp_loss=cp_loss, quality=quality_from_cp_loss(cp_loss))
 
     def best_move(self, fen: str) -> str:
-        try:
-            board = chess.Board(fen)  # ValueError bila FEN tidak valid
-        except ValueError as exc:
-            raise ValueError(f"fen tidak valid: {exc}") from exc
+        board = _parse_board(fen)
         if not board.is_valid():
             raise ValueError("posisi fen tidak legal")
         if not any(board.legal_moves):
             raise ValueError("tidak ada langkah legal")
 
-        engine = self._ensure_engine()
         limit = chess.engine.Limit(depth=self._depth)
         try:
+            # Spawn DI DALAM lock, sama seperti analyze(); lihat BE-006.
             with self._lock:
+                engine = self._ensure_engine()
                 result = engine.play(board, limit)
         except chess.engine.EngineError as exc:
-            # Engine mati: buang agar request berikutnya memulai proses baru.
-            self._engine = None
+            # Engine mati: tutup prosesnya lalu buang, request berikutnya spawn baru.
+            with self._lock:
+                self._discard_engine()
             raise ModelNotLoadedError(f"Engine gagal mencari langkah: {exc}") from exc
+        if result.move is None:
+            # shortcut: nyaris tak pernah terjadi pada posisi yang punya langkah
+            # legal; dipetakan ke 503 supaya tidak jadi AttributeError 500.
+            raise ModelNotLoadedError("Engine tidak menghasilkan langkah.")
         return result.move.uci()
 
     def close(self) -> None:
-        if self._engine is not None:
-            with self._lock:
-                self._engine.quit()
-            self._engine = None
+        with self._lock:
+            self._discard_engine()
 
 
 # ============================== Endpoint ==============================
@@ -331,11 +417,14 @@ def classify(payload: ClassifyRequest, request: Request) -> ClassifyResponse:
         )
 
     try:
+        # Satu gerbang validasi FEN: menolak FEN sampah (mis. nomor langkah
+        # raksasa) sebelum masuk ke pipeline model.
+        _parse_board(payload.fen)
         prediction = classifier.predict(payload.fen)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"FEN tidak valid: {exc}",
+            detail=str(exc),
         ) from exc
     except ModelNotLoadedError as exc:  # pragma: no cover - dijaga di atas
         raise HTTPException(
@@ -440,20 +529,32 @@ def create_app(
     @app.middleware("http")
     async def log_io(request: Request, call_next):
         """Cetak payload request/response tiap /api/* ke terminal (bantu debug)."""
-        log = request.method != "OPTIONS" and request.url.path.startswith("/api/")
-        body = await request.body() if log else b""
+        if request.method == "OPTIONS" or not request.url.path.startswith("/api/"):
+            return await call_next(request)
+
+        body = await request.body()
+        if len(body) > MAX_BODY_BYTES:
+            # Tolak sebelum diproses; isinya tidak dicatat maupun dipantulkan.
+            return JSONResponse(
+                status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+                content={"detail": f"body melebihi batas {MAX_BODY_BYTES} byte"},
+            )
+
         response = await call_next(request)
         payload = b"".join([chunk async for chunk in response.body_iterator])
-        if log:
-            logger.info("%s %s <- %s", request.method, request.url.path, body.decode(errors="replace") or "-")
-            logger.info(
-                "%s %s -> %s %s",
-                request.method,
-                request.url.path,
-                response.status_code,
-                payload.decode(errors="replace") or "-",
-            )
-        return Response(content=payload, status_code=response.status_code, headers=dict(response.headers))
+        logger.info("%s %s <- %s", request.method, request.url.path, _snippet(body))
+        logger.info(
+            "%s %s -> %s %s",
+            request.method,
+            request.url.path,
+            response.status_code,
+            _snippet(payload),
+        )
+        return Response(
+            content=payload,
+            status_code=response.status_code,
+            headers=dict(response.headers),
+        )
 
     app.state.classifier = phase_classifier
     app.state.move_analyzer = analyzer

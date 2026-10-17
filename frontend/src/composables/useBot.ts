@@ -27,42 +27,45 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Mode vs bot: manusia putih, Stockfish hitam. Bot melangkah otomatis saat giliran hitam. */
 export function useBot(chess: ReturnType<typeof useChess>) {
-  const enabled = ref(false)
-  const thinking = ref(false)
-  const error = ref<string | null>(null)
-  let controller: AbortController | null = null
+  const enabled = ref(false);
+  const thinking = ref(false);
+  const error = ref<string | null>(null);
+  let controller: AbortController | null = null;
 
   async function requestMove() {
-    controller?.abort()
-    const current = new AbortController()
-    controller = current
-    thinking.value = true
-    error.value = null
-    const startedAt = Date.now()
+    controller?.abort();
+    const current = new AbortController();
+    controller = current;
+    thinking.value = true;
+    error.value = null;
+    const startedAt = Date.now();
     try {
-      const { move_uci } = await bestMove(chess.fen.value, current.signal)
+      const { move_uci } = await bestMove(chess.fen.value, current.signal);
       // Engine sering menjawab instan; tahan agar bot terasa berpikir.
-      const remaining = BOT_THINK_MS - (Date.now() - startedAt)
-      if (remaining > 0) await wait(remaining, current.signal)
-      if (current.signal.aborted) return
+      const remaining = BOT_THINK_MS - (Date.now() - startedAt);
+      if (remaining > 0) await wait(remaining, current.signal);
+      if (current.signal.aborted) return;
       if (!chess.playUci(move_uci)) {
-        error.value = 'Engine memberi langkah yang tidak valid.'
+        error.value = "Engine memberi langkah yang tidak valid.";
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      if (current.signal.aborted) return
-      error.value = err instanceof ApiError ? err.message : 'Terjadi kesalahan tak terduga.'
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (current.signal.aborted) return;
+      error.value =
+        err instanceof ApiError
+          ? err.message
+          : "Terjadi kesalahan tak terduga.";
     } finally {
       if (controller === current) {
-        thinking.value = false
-        controller = null
+        thinking.value = false;
+        controller = null;
       }
     }
   }
 
   /** Batalkan request berjalan dan bersihkan status bot. */
   function cancel() {
-    controller?.abort()
+    controller?.abort();
     controller = null
     thinking.value = false
     error.value = null
