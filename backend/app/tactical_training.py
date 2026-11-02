@@ -53,7 +53,8 @@ def build_pipeline(seed: int = 42, max_iter: int = 500) -> Pipeline:
                 OneVsRestClassifier(
                     LogisticRegression(
                         max_iter=max_iter,
-                        class_weight="balanced",
+                        # Tanpa class_weight="balanced": bobot seimbang membuat
+                        # motif langka overconfident di posisi di luar training.
                         solver="liblinear",
                         random_state=seed,
                     ),
