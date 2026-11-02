@@ -13,9 +13,10 @@ parquet LFS di repo.
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+import numpy as np
 from datasets import Dataset, load_dataset
 
 DATASET_ID = "Lichess/chess-puzzles"
@@ -51,6 +52,10 @@ ATTACK_THEMES: frozenset[str] = frozenset(
     }
 )
 
+# Urutan kelas tetap dan deterministik: dipakai untuk membangun vektor label
+# sekaligus urutan probabilitas saat serving.
+ATTACK_CLASSES: tuple[str, ...] = tuple(sorted(ATTACK_THEMES))
+
 
 def fen_white_to_move(fen: str) -> bool:
     """True bila field giliran FEN adalah putih (solver puzzle = hitam)."""
@@ -58,9 +63,47 @@ def fen_white_to_move(fen: str) -> bool:
     return len(fields) >= 2 and fields[1] == "w"
 
 
-def attack_theme_labels(themes: list[str] | tuple[str, ...] | None) -> set[str]:
+def attack_theme_labels(themes: Sequence[str] | None) -> set[str]:
     """Ambil hanya theme motif serangan dari daftar ``Themes``."""
     return set(themes or ()) & ATTACK_THEMES
+
+
+def attack_label_vector(themes: Sequence[str] | None) -> list[int]:
+    """Vektor 0/1 multi-label sesuai urutan :data:`ATTACK_CLASSES`."""
+    present = attack_theme_labels(themes)
+    return [int(name in present) for name in ATTACK_CLASSES]
+
+
+def attack_label_matrix(themes_rows: Sequence[Sequence[str] | None]) -> np.ndarray:
+    """Matriks label ``(n_baris, n_kelas)`` bertipe ``int8``.
+
+    ``Themes`` di dataset bisa ``None``; baris seperti itu jadi semua nol (tapi
+    loader sudah membuangnya lewat :func:`is_black_attack_row`).
+    """
+    return np.asarray(
+        [attack_label_vector(themes) for themes in themes_rows], dtype=np.int8
+    )
+
+
+def split_by_game_id(
+    game_ids: Sequence[str],
+    test_size: float = 0.2,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bagi indeks train/test per ``GameId`` agar tidak ada game yang bocor.
+
+    FEN yang sama bisa muncul di beberapa puzzle dari game yang sama; split per
+    baris akan menaruh duplikat di dua sisi. Mengembalikan ``(mask_train,
+    mask_test)`` berupa array boolean sepanjang ``game_ids``.
+    """
+    ids = np.asarray(game_ids)
+    unique_ids = np.unique(ids)
+    rng = np.random.default_rng(seed)
+    rng.shuffle(unique_ids)
+    n_test = max(1, int(len(unique_ids) * test_size)) if len(unique_ids) > 1 else 0
+    test_ids = set(unique_ids[:n_test].tolist())
+    mask_test = np.fromiter((gid in test_ids for gid in ids), dtype=bool, count=len(ids))
+    return ~mask_test, mask_test
 
 
 def is_black_attack_row(
