@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import (
+    BLACK_ATTACK_MODEL_PATH,
+    BLACK_ATTACK_MODEL_VERSION,
     CORS_ORIGINS,
     ENGINE_DEPTH,
     MODEL_PATH,
@@ -35,6 +37,7 @@ from .config import (
     STOCKFISH_PATH,
 )
 from .ml import PHASES
+from .tactical import ATTACK_CLASSES
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +133,18 @@ class ClassifyResponse(BaseModel):
     label: PhaseLabel
     confidence: float = Field(..., ge=0.0, le=1.0)
     probabilities: ProbabilityMap
+    model_version: str
+
+
+class TacticLabelProbability(BaseModel):
+    label: str
+    probability: float = Field(..., ge=0.0, le=1.0)
+
+
+class ClassifyTacticResponse(BaseModel):
+    """Motif serangan hitam, multi-label, diurutkan dari probabilitas tertinggi."""
+
+    labels: list[TacticLabelProbability]
     model_version: str
 
 
@@ -268,6 +283,104 @@ class PhaseClassifier:
         confidence = float(probabilities[label])
         return Prediction(
             label=label, confidence=confidence, probabilities=probabilities
+        )
+
+
+class TacticalClassifier:
+    """Membungkus pipeline multi-label pola serangan hitam.
+
+    Artifact menyimpan dict ``{pipeline, classes, feature_names, model_version}``
+    supaya urutan kelas dan versi ikut artifact, bukan konstanta kode yang bisa
+    basi.
+    """
+
+    def __init__(
+        self,
+        model: Any | None = None,
+        classes: tuple[str, ...] = ATTACK_CLASSES,
+        model_version: str = BLACK_ATTACK_MODEL_VERSION,
+    ) -> None:
+        self._model = model
+        self._classes = tuple(classes)
+        self.model_version = model_version
+
+    @property
+    def ready(self) -> bool:
+        return self._model is not None
+
+    @classmethod
+    def from_path(cls, path: str | Path = BLACK_ATTACK_MODEL_PATH) -> TacticalClassifier:
+        path = Path(path)
+        if not path.exists():
+            logger.warning(
+                "Model taktis tidak ditemukan di %s. Endpoint /api/classify-tactic "
+                "mengembalikan 503 sampai model dilatih.",
+                path,
+            )
+            return cls(None)
+        try:
+            bundle = joblib.load(path)
+        except Exception as exc:
+            logger.error(
+                "Gagal memuat model taktis dari %s: %s. /api/classify-tactic "
+                "mengembalikan 503; jalankan ulang training.",
+                path,
+                exc,
+            )
+            return cls(None)
+        if not isinstance(bundle, dict) or "pipeline" not in bundle:
+            logger.error(
+                "Artifact taktis di %s bukan bundle yang dikenali; "
+                "/api/classify-tactic mengembalikan 503.",
+                path,
+            )
+            return cls(None)
+
+        model = bundle["pipeline"]
+        if not hasattr(model, "predict_proba"):
+            logger.error(
+                "Pipeline taktis di %s tidak punya predict_proba; "
+                "/api/classify-tactic mengembalikan 503.",
+                path,
+            )
+            return cls(None)
+        try:
+            model.predict_proba([_START_FEN])
+        except Exception as exc:
+            logger.error(
+                "Artifact taktis di %s tidak cocok dengan kode fitur saat ini: %s. "
+                "/api/classify-tactic mengembalikan 503; jalankan ulang training.",
+                path,
+                exc,
+            )
+            return cls(None)
+
+        logger.info("Model taktis dimuat dari %s", path)
+        return cls(
+            model,
+            classes=tuple(bundle.get("classes", ATTACK_CLASSES)),
+            model_version=str(
+                bundle.get("model_version", BLACK_ATTACK_MODEL_VERSION)
+            ),
+        )
+
+    def predict(self, fen: str) -> list[tuple[str, float]]:
+        """Kembalikan ``(motif, probabilitas)`` urut menurun."""
+        if self._model is None:
+            raise ModelNotLoadedError("model taktis belum dimuat")
+
+        probabilities = self._model.predict_proba([fen])[0]
+        if len(probabilities) != len(self._classes):
+            raise ModelNotLoadedError(
+                "jumlah kelas artifact tidak cocok dengan daftar kelas"
+            )
+        return sorted(
+            (
+                (name, float(probability))
+                for name, probability in zip(self._classes, probabilities)
+            ),
+            key=lambda item: item[1],
+            reverse=True,
         )
 
 
@@ -420,6 +533,10 @@ def _get_classifier(request: Request) -> PhaseClassifier:
     return request.app.state.classifier
 
 
+def _get_tactical_classifier(request: Request) -> TacticalClassifier:
+    return request.app.state.tactical_classifier
+
+
 @router.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
@@ -454,6 +571,41 @@ def classify(payload: ClassifyRequest, request: Request) -> ClassifyResponse:
         label=prediction.label,
         confidence=prediction.confidence,
         probabilities=prediction.probabilities,
+        model_version=classifier.model_version,
+    )
+
+
+@router.post("/classify-tactic", response_model=ClassifyTacticResponse)
+def classify_tactic(
+    payload: ClassifyRequest, request: Request
+) -> ClassifyTacticResponse:
+    """Prediksi motif serangan hitam dari FEN giliran putih (multi-label)."""
+    classifier = _get_tactical_classifier(request)
+
+    if not classifier.ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Model taktis belum tersedia. Latih model terlebih dahulu.",
+        )
+
+    try:
+        _parse_board(payload.fen)
+        predictions = classifier.predict(payload.fen)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
+    except ModelNotLoadedError as exc:  # pragma: no cover - dijaga di atas
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+
+    return ClassifyTacticResponse(
+        labels=[
+            TacticLabelProbability(label=label, probability=probability)
+            for label, probability in predictions
+        ],
         model_version=classifier.model_version,
     )
 
@@ -511,6 +663,7 @@ def best_move(payload: BestMoveRequest, request: Request) -> BestMoveResponse:
 def create_app(
     classifier: PhaseClassifier | None = None,
     move_analyzer: MoveAnalyzer | None = None,
+    tactical_classifier: TacticalClassifier | None = None,
 ) -> FastAPI:
     """Bangun instance FastAPI.
 
@@ -519,11 +672,18 @@ def create_app(
             model dimuat dari :data:`app.config.MODEL_PATH`.
         move_analyzer: opsional, untuk injeksi. Bila ``None``, engine UCI
             (Stockfish) disiapkan secara malas saat analisis pertama.
+        tactical_classifier: opsional, untuk injeksi. Bila ``None``, model
+            taktis dimuat dari :data:`app.config.BLACK_ATTACK_MODEL_PATH`.
     """
     phase_classifier = (
         classifier if classifier is not None else PhaseClassifier.from_path(MODEL_PATH)
     )
     analyzer = move_analyzer if move_analyzer is not None else MoveAnalyzer()
+    tactic_classifier = (
+        tactical_classifier
+        if tactical_classifier is not None
+        else TacticalClassifier.from_path(BLACK_ATTACK_MODEL_PATH)
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -533,7 +693,10 @@ def create_app(
     app = FastAPI(
         title="Chess Classification API",
         version=MODEL_VERSION,
-        description="Klasifikasi fase permainan catur (opening/middlegame/endgame) dari FEN.",
+        description=(
+            "Klasifikasi fase permainan catur (opening/middlegame/endgame) dan "
+            "motif serangan hitam (multi-label) dari FEN."
+        ),
         lifespan=lifespan,
     )
 
@@ -582,6 +745,7 @@ def create_app(
 
     app.state.classifier = phase_classifier
     app.state.move_analyzer = analyzer
+    app.state.tactical_classifier = tactic_classifier
 
     app.include_router(router)
     return app

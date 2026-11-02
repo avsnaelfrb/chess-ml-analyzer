@@ -21,6 +21,15 @@ METRICS_PATH = Path(os.getenv("CHESS_METRICS", MODELS_DIR / "metrics.json"))
 MODEL_VERSION = os.getenv("CHESS_MODEL_VERSION", "0.1.0")
 MOVE_ANALYSIS_MODEL_VERSION = os.getenv("CHESS_MOVE_ANALYSIS_MODEL_VERSION", "0.2.0")
 
+# Model taktis (pola serangan hitam) terpisah dari model fase.
+BLACK_ATTACK_MODEL_PATH = Path(
+    os.getenv("CHESS_BLACK_ATTACK_MODEL", MODELS_DIR / "black_attack.joblib")
+)
+BLACK_ATTACK_METRICS_PATH = Path(
+    os.getenv("CHESS_BLACK_ATTACK_METRICS", MODELS_DIR / "black_attack_metrics.json")
+)
+BLACK_ATTACK_MODEL_VERSION = os.getenv("CHESS_BLACK_ATTACK_MODEL_VERSION", "0.1.0")
+
 def _int_env(name: str, default: int, minimum: int = 1) -> int:
     """Baca env sebagai int; nilai tak terbaca / keluar batas jatuh ke default.
 

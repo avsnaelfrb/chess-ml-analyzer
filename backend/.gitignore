@@ -13,7 +13,7 @@ wheels/
 datasets/
 data/
 models/*.joblib
-models/metrics.json
+models/*metrics.json
 
 # Biner engine UCI (diunduh lokal, jangan di-commit)
 bin/
