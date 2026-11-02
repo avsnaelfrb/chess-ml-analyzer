@@ -4,13 +4,18 @@ Dokumen ini adalah **sumber kebenaran bersama** untuk seluruh repo (frontend +
 backend + model). Tujuannya menyelaraskan scope, kontrak, dan status antar
 bagian. Setiap agent/anggota tim membaca ini lebih dulu sebelum bekerja.
 
-> **Status terakhir diperbarui:** Oktober 2026.
+> **Status terakhir diperbarui:** November 2026.
 > Ringkasan cepat: kontrak `/api/classify` (klasifikasi **fase**) sudah **beku**
 > dan terintegrasi di frontend — jangan diubah. Tugas kedua, **analisis langkah**
 > (`POST /api/analyze-move`, input `fen_before` + langkah UCI), **sudah jalan**:
 > backend memakai engine UCI **Stockfish** untuk menghitung centipawn loss lalu
 > memetakannya ke `Good/Inaccuracy/Mistake/Blunder`. Frontend sudah mengirim
 > `fen_before` + `move_uci` dan menampilkan hasilnya.
+>
+> Tugas ketiga, **pola serangan hitam** (`POST /api/classify-tactic`, input FEN
+> giliran putih), **sudah jalan end-to-end**: backend model ML multi-label +
+> panel frontend yang hanya aktif saat giliran putih. Kontrak di bagian 4b,
+> UI di bagian 9c.
 >
 > Legenda status: 🔒 **Beku** (jangan diubah tanpa kesepakatan) · ✅ **Selesai** ·
 > 🔜 **Rencana** (belum dikerjakan).
@@ -20,13 +25,17 @@ bagian. Setiap agent/anggota tim membaca ini lebih dulu sebelum bekerja.
 Fokus utama repo adalah **model klasifikasi**, bukan game engine catur. Game di
 frontend hanyalah sarana menghasilkan **input** bagi model.
 
-Dua tugas yang disepakati:
+Tugas yang disepakati:
 
 1. **Fase permainan** (sudah jalan, beku) — input **FEN** → `opening` /
    `middlegame` / `endgame`.
 2. **Analisis langkah** (sudah jalan) — input **`fen_before` + langkah (UCI)** →
    kualitas langkah (Good/Inaccuracy/Mistake/Blunder) lewat engine Stockfish.
    Endpoint **baru**, tidak menggantikan yang lama.
+3. **Pola serangan hitam** (sudah jalan) — input **FEN
+   giliran putih** → daftar motif taktik hitam (multi-label) beserta
+   probabilitasnya. Endpoint **baru** `/api/classify-tactic`, tidak
+   menggantikan `/api/classify`.
 
 Flow saat ini (fase):
 
@@ -38,6 +47,12 @@ Flow analisis langkah (sudah jalan):
 
 ```
 [Papan frontend] ──{fen_before, move_uci}──▶ POST /api/analyze-move ──▶ [Backend + model] ──▶ {quality, ...} ──▶ ditampilkan
+```
+
+Flow pola serangan hitam (sudah jalan):
+
+```
+[Papan frontend, giliran putih] ──FEN──▶ POST /api/classify-tactic ──▶ [Backend + model multi-label] ──▶ {labels[]} ──▶ ditampilkan
 ```
 
 ## 2. Prinsip desain (baca dulu sebelum menambah label)
@@ -53,6 +68,15 @@ Flow analisis langkah (sudah jalan):
   Itu bisa dibaca langsung; model tidak menambah nilai.
 - **Label yang berguna bagi pemain biasanya timpang** (mis. blunder sangat
   langka). Keseimbangan kelas harus dicek sebelum melatih.
+- **Pola serangan hitam adalah multi-label.** Satu posisi bisa punya `fork` +
+  `sacrifice` + `mate` sekaligus; jangan dipaksa jadi satu kelas.
+- **Input model taktis = FEN giliran putih.** Di mode vs bot, user putih dan bot
+  hitam. Dataset Lichess dipilih dari FEN `w` (solver = hitam) supaya input
+  training sama dengan yang dikirim frontend. Jangan mengubah FEN (mis.
+  menerapkan langkah lawan) sebelum memanggil endpoint.
+- **Model taktis memprediksi potensi, bukan kepastian.** FEN hanya posisi;
+  motif baru muncul setelah langkah berikutnya. Karena itu hasilnya berupa
+  probabilitas per motif, bukan satu vonis.
 
 ## 3. Kontrak API — FASE 🔒 BEKU
 
@@ -172,6 +196,72 @@ Aturan:
 Batas input berlaku untuk semua endpoint: `fen` maks 200 karakter,
 `move_uci` maks 5 karakter, badan request maks 64 KB (lebih → `413`).
 
+## 4b. Kontrak API — POLA SERANGAN HITAM ✅ sudah jalan (backend + frontend)
+
+Model ML **multi-label** terpisah dari model fase. Endpoint tidak menggantikan
+`/api/classify`.
+
+### `POST /api/classify-tactic`
+
+Request (JSON) — sama seperti `/api/classify`:
+
+```json
+{ "fen": "6k1/5p1p/4p3/4q3/3nN3/2Q3P1/PP3P1P/6K1 w - - 2 37" }
+```
+
+- Kirim FEN **posisi saat ini, giliran putih** (`w` di field kedua). Itu input
+  yang dipakai saat training.
+- Jangan menerapkan langkah apa pun dulu; jangan mengirim FEN setelah langkah.
+
+Response `200`:
+
+```json
+{
+  "labels": [
+    { "label": "fork", "probability": 0.61 },
+    { "label": "hangingPiece", "probability": 0.55 },
+    { "label": "discoveredAttack", "probability": 0.48 }
+  ],
+  "model_version": "0.1.0"
+}
+```
+
+Aturan:
+
+- `labels` berisi **semua 23 motif**, diurutkan dari probabilitas tertinggi.
+  Frontend boleh mengambil top-N atau memfilter sendiri.
+- `probability` tiap motif **independen**, `0.0`–`1.0`; **tidak** dijumlahkan
+  menjadi 1 (ini multi-label, bukan softmax).
+- Nama motif yang mungkin muncul:
+  `advancedPawn`, `attackingF2F7`, `attraction`, `backRankMate`,
+  `capturingDefender`, `clearance`, `deflection`, `discoveredAttack`,
+  `discoveredCheck`, `doubleCheck`, `exposedKing`, `fork`, `hangingPiece`,
+  `interference`, `kingsideAttack`, `mate`, `pin`, `promotion`, `queensideAttack`,
+  `sacrifice`, `skewer`, `trappedPiece`, `xRayAttack`.
+- FEN tidak valid / angka langkah ekstrem → `422` `{ "detail": "..." }`.
+- Artifact model taktis belum ada / korup / versi fitur beda → `503`
+  `{ "detail": "..." }`. Endpoint fase tetap hidup.
+- `model_version` diambil dari artifact, bukan konstanta env.
+- Model hanya dilatih pada FEN giliran putih. FEN giliran hitam tetap diterima
+  (tidak `422`), tetapi hasilnya di luar distribusi training — frontend
+  sebaiknya hanya memanggil saat `turn === 'white'`.
+
+**Kualitas model saat ini (jujur, jangan ditampilkan sebagai kebenaran):**
+
+Baseline 200k baris (160k train / 40k test, split per `GameId`) **tanpa**
+`class_weight="balanced"`: macro-AP **0,274**, macro-F1@0,5 **0,153**,
+micro-F1 **0,384**, subset accuracy **0,194**. Motif yang relatif jalan:
+`mate` (AP 0,741), `backRankMate` (0,638), `advancedPawn` (0,624),
+`kingsideAttack` (0,537), `queensideAttack` (0,518). Motif langka masih lemah,
+mis. `interference` (0,010), `clearance` (0,038), `capturingDefender` (0,046),
+`xRayAttack` (0,055).
+
+Macro-F1 turun dibanding versi `balanced` karena ambang tetap 0,5 tidak cocok
+untuk kelas timpang; gunakan **AP** untuk membandingkan kualitas ranking.
+Probabilitas masih membawa prior dataset (`mate` ~44% dari data), jadi **jangan
+tampilkan top-1 sebagai kesimpulan**. Tampilkan beberapa label dengan bar
+probabilitas, beri label "eksperimental", dan terapkan ambang tampilan.
+
 ## 5. Status terkini
 
 | Area | Status | Catatan |
@@ -179,21 +269,27 @@ Batas input berlaku untuk semua endpoint: `fen` maks 200 karakter,
 | Game catur frontend | ✅ Selesai | Vue 3 + TS + Vite, pemain lokal, aturan langkah lengkap |
 | Integrasi fase frontend | ✅ Selesai | `src/api/classify.ts`, `AnalysisPanel`, proxy `/api` |
 | Endpoint fase (`/api/health`, `/api/classify`) | 🔒 Beku | FastAPI, sesuai bagian 3 |
-| Struktur backend | ✅ Dirapikan | 2 modul inti `app/api.py` + `app/ml.py`; entrypoint `train.py` |
+| Struktur backend | ✅ Dirapikan | `app/api.py` + `app/ml.py` + modul taktis terpisah; entrypoint `train.py`, `train_black_attack.py` |
 | Model fase | ✅ Latih ulang | Tanpa fitur waktu (BE-005); akurasi test ~0.944, baseline ~0.537 |
 | Dataset | ✅ Tersedia | `moves.csv` (3,18 jt baris) + `puzzles.csv` (1.176 baris) |
-| Test backend | ✅ Hijau | 51 test (API+batas input 12, fitur 7, pola pion 8, perilaku model 4, analisis langkah 7, best-move 7, siklus engine 3, training 3) |
-| Katalog label (dua dataset) | ✅ Terdokumentasi | Bagian 7 |
+| Test backend | ✅ Hijau | 78 test (API+batas input 12, fitur fase 7, pola pion 8, perilaku model 4, analisis langkah 7, best-move 7, siklus engine 3, training fase 3, filter taktis 10, fitur taktis 10, training taktis 3, API taktis 4) |
+| Katalog label (tiga dataset) | ✅ Terdokumentasi | Bagian 7 |
 | Analisis langkah (`/api/analyze-move`) | ✅ Selesai (engine) | Stockfish; kontrak di bagian 4 |
 | Langkah bot (`/api/best-move`) | ✅ Selesai (engine) | Mode vs bot; kontrak di bagian 4 |
+| Dataset taktis Lichess | ✅ Terpasang | `Lichess/chess-puzzles` via HuggingFace `datasets`; detail bagian 6c |
+| Model pola serangan hitam | ✅ Baseline | Multi-label, 23 motif, 46 fitur, macro-AP 0,274; metrik bagian 4b/8b |
+| Endpoint taktis (`/api/classify-tactic`) | ✅ Selesai (backend) | Kontrak di bagian 4b |
+| Integrasi frontend pola serangan hitam | ✅ Selesai | Panel di `AnalysisPanel`, hanya giliran putih; bagian 9c |
 
 **Implikasi untuk frontend:** integrasi fase tidak berubah. Frontend sudah
 mengirim **`fen_before` + `move_uci`** dan menampilkan hasil analisis langkah
-(bagian 9b) — end-to-end sudah jalan.
+(bagian 9b) — end-to-end sudah jalan. Pola serangan hitam sudah dipanggil dari
+panel analisis saat giliran putih (bagian 9c).
 
 ## 6. Dataset
 
-Semua di `backend/datasets/` (gitignored, ukuran besar).
+Dataset lokal ada di `backend/datasets/` (gitignored, ukuran besar). Dataset
+taktis Lichess diunduh ke cache HuggingFace, bukan ke folder ini.
 
 ### `moves.csv` — data utama (posisi + langkah per baris)
 
@@ -222,7 +318,27 @@ Semua di `backend/datasets/` (gitignored, ukuran besar).
   sekarang tidak cukup — perlu fitur dinamis. Uji awal klasifikasi tema
   ~0.495 ≈ baseline.
 
-## 7. Katalog label yang mungkin (hasil analisis dua dataset)
+### `Lichess/chess-puzzles` — dataset taktis (HuggingFace) ✅
+
+Dimuat lewat `datasets.load_dataset("Lichess/chess-puzzles")`, **bukan** disimpan
+di repo. Cache HF ~1,1 GB; total 6.157.341 baris.
+
+- Kolom kunci: `FEN`, `Moves`, `Themes`, `GameId`, `Popularity`, `Rating`,
+  `NbPlays`.
+- **`FEN` = satu ply sebelum posisi puzzle.** `Moves[0]` adalah langkah lawan
+  (blunder) yang memulai taktik. Karena itu **jangan** menerapkan `Moves[0]`;
+  FEN mentah itulah yang dikirim frontend.
+- Filter yang dipakai training:
+  - `FEN.split()[1] == "w"` → solver (yang memainkan taktik) adalah **hitam**.
+    Ini yang membuat motifnya "serangan hitam" dan inputnya cocok dengan FEN
+    giliran putih dari frontend.
+  - `Popularity >= 50` → buang puzzle yang jarang dimainkan.
+  - Sampling `--sample N` untuk eksperimen cepat (default 200k).
+- Split **per `GameId`** (bukan per baris) supaya posisi dari game yang sama
+  tidak muncul di train dan test sekaligus.
+- Detail loader: `backend/app/tactical.py`.
+
+## 7. Katalog label yang mungkin (hasil analisis tiga dataset)
 
 Saringan: label harus **berguna bagi pemain** *dan* **tidak bisa dihitung aturan
 sederhana** *dan* **cukup seimbang**.
@@ -250,9 +366,48 @@ sederhana** *dan* **cukup seimbang**.
 
 **Prioritas yang disepakati:** tugas kedua = **analisis langkah** (kualitas
 langkah / `cp_loss`) karena paling berguna bagi pemain dan didukung data
-terbesar. Kandidat berikutnya (tema taktis) dicatat sebagai rencana lanjutan.
+terbesar. Rencana lanjutan tema taktis kemudian dikerjakan dengan dataset
+Lichess (bagian 7c/8b), bukan `puzzles.csv` yang terlalu kecil.
 
-## 8. Pendekatan model (tugas fase — yang sudah jalan)
+### Dari `Lichess/chess-puzzles` — motif serangan hitam (23 label)
+
+Sumber: kolom `Themes` (dipisah spasi). Hanya tema **serangan/taktik** yang
+diambil; tema generik dibuang (fase, panjang puzzle, keunggulan, sumber,
+`defensiveMove`, `quietMove`, `zugzwang`). Satu posisi bisa punya beberapa
+motif → **multi-label**, jangan dipaksa satu kelas.
+
+| Label | Arti singkat |
+|---|---|
+| `fork` | satu bidak menyerang dua target sekaligus |
+| `pin` | bidak putih terpaku ke bidak/raja di belakangnya |
+| `skewer` | bidak depan dipaksa bergerak, membuka bidak belakang |
+| `discoveredAttack` | membuka serangan bidak lain dengan menggerakkan bidak |
+| `xRayAttack` | serangan menembus bidak sendiri |
+| `deflection` | memaksa pembela meninggalkan tugasnya |
+| `attraction` | menarik bidak putih ke petak yang merugikan |
+| `clearance` | mengosongkan petak/garis untuk bidak lain |
+| `interference` | menyumbat garis pertahanan putih |
+| `sacrifice` | mengorbankan material untuk motif |
+| `discoveredCheck` | skak yang terbuka karena bidak lain bergerak |
+| `doubleCheck` | skak ganda |
+| `kingsideAttack` | serangan ke sayap raja |
+| `queensideAttack` | serangan ke sayap ratu |
+| `attackingF2F7` | menyerang petak lemah f2/f7 |
+| `backRankMate` | skak mat baris belakang |
+| `exposedKing` | raja putih terbuka |
+| `hangingPiece` | bidak putih tak terjaga |
+| `trappedPiece` | bidak putih terkurung |
+| `capturingDefender` | menangkap pembela lalu menyerang |
+| `advancedPawn` | pion maju berbahaya |
+| `promotion` | promosi pion |
+| `mate` | skak mat |
+
+Daftar final + urutan ada di `ATTACK_CLASSES` (`backend/app/tactical.py`) dan
+ikut disimpan di artifact. Endpoint mengembalikan **semua 23** label.
+
+## 8. Pendekatan model
+
+### 8a. Fase — yang sudah jalan
 
 - Model: scikit-learn `RandomForestClassifier` (`random_state=42`) di dalam
   `Pipeline` yang juga memuat ekstraksi fitur dari FEN.
@@ -271,6 +426,70 @@ terbesar. Kandidat berikutnya (tema taktis) dicatat sebagai rencana lanjutan.
 Catatan: mengganti algoritma (RF/HGB/LogReg) **tidak** mengubah label posisi
 OOD (mis. K+Q mate di `fullmove 1` tetap `middlegame`) — bahkan fitur waktu
 sekalipun. Akar masalahnya definisi label, bukan fitur/model.
+
+### 8b. Pola serangan hitam — baseline ✅
+
+Semua fitur diukur dari **sudut pandang hitam**, karena motif yang dipelajari
+adalah motif hitam pada posisi giliran putih.
+
+- **Fitur (46, dinamis dari FEN)** di `backend/app/tactical_features.py`:
+  material, posisi raja putih (file/rank/castled, shield pion, file terbuka,
+  bidak berat hitam di dekat raja), tekanan hitam (jumlah/nilai bidak putih
+  yang diserang, hanging, fork targets, defender yang bisa ditangkap), pin
+  putih, geometri skewer/discovered/discovered-check, pion hitam
+  maju/passed/promosi, celah baris belakang, dan proksi mobilitas hitam
+  (simulasi giliran hitam: jumlah langkah, skak, tangkapan, nilai tangkapan).
+  Papan asli tidak diubah; hanya salinan untuk hitung mobilitas.
+- **Model:** `Pipeline` = `TacticalFeatureExtractor` → `StandardScaler` →
+  `OneVsRestClassifier(LogisticRegression(solver="liblinear"))`. Multi-label
+  One-vs-Rest: tiap motif punya probabilitas sendiri (tidak di-softmax).
+  Sengaja **tanpa** `class_weight="balanced"`: bobot seimbang membuat motif
+  langka sangat overconfident pada posisi di luar training (posisi awal bisa
+  memberi `trappedPiece` ~0,96).
+- **Split & evaluasi:** split per `GameId`; metrik **per-kelas average
+  precision (AP)** + macro/micro-F1. Accuracy tidak dipakai karena `mate`
+  ~44% sementara `interference`/`xRayAttack` ~0,5%.
+- **Artifact:** `backend/models/black_attack.joblib` berisi
+  `{pipeline, classes, feature_names, model_version}` (gitignored). Metrik
+  per kelas: `backend/models/black_attack_metrics.json` (gitignored).
+- **Baseline (200k baris, 160k train / 40k test):** macro-AP **0,274**,
+  macro-F1@0,5 **0,153**, micro-F1 **0,384**, subset accuracy **0,194**.
+
+Motif dengan AP terbaik (test 40k):
+
+| Motif | Support | AP |
+|---|---:|---:|
+| `mate` | 17.721 | 0,741 |
+| `backRankMate` | 2.185 | 0,638 |
+| `advancedPawn` | 3.500 | 0,624 |
+| `kingsideAttack` | 4.783 | 0,537 |
+| `queensideAttack` | 989 | 0,518 |
+| `promotion` | 1.376 | 0,458 |
+| `attackingF2F7` | 268 | 0,420 |
+
+Motif dengan AP terburuk (support kecil):
+
+| Motif | Support | AP |
+|---|---:|---:|
+| `interference` | 207 | 0,010 |
+| `clearance` | 758 | 0,038 |
+| `capturingDefender` | 421 | 0,046 |
+| `xRayAttack` | 200 | 0,055 |
+| `doubleCheck` | 258 | 0,081 |
+| `deflection` | 2.355 | 0,106 |
+
+Batasan yang harus diingat:
+
+- Probabilitas **belum terkalibrasi**. Tanpa `class_weight`, nilainya jauh
+  lebih masuk akal (posisi awal: `mate` ~0,60, label lain < 0,26), tetapi
+  masih membawa prior dataset karena training hanya berisi posisi puzzle
+  (`mate` ~44%). Jangan jadikan top-1 sebagai keputusan.
+- Macro-F1@0,5 rendah untuk motif langka. Itu efek ambang, bukan ranking;
+  AP tetap naik dibanding versi `balanced`. Ambang per motif belum dituning.
+- Model memprediksi **potensi** dari posisi statis, bukan memastikan langkah
+  berikutnya. Motif nyata baru muncul setelah hitam melangkah.
+- Artefak tidak di-commit. Clone baru harus menjalankan training dulu, kalau
+  tidak endpoint membalas `503`.
 
 ## 9. Tanggung jawab frontend
 
@@ -315,6 +534,54 @@ Penting:
   `fen_before`. `fen` yang ada sekarang = posisi **sesudah** langkah.
 - **Jangan mengubah alur `/api/classify`** yang sudah jalan.
 
+### 9c. Pola serangan hitam ✅ (backend + frontend selesai)
+
+Target: tombol/panel "Pola serangan hitam" yang memanggil
+`POST /api/classify-tactic` (kontrak bagian 4b) dan menampilkan beberapa motif
+teratas dengan bar probabilitas.
+
+Yang perlu ditambahkan:
+
+1. **Client** di `src/api/classify.ts`, mengikuti pola `classifyFen` /
+   `analyzeMove` (termasuk `AbortSignal` dan `ClassifyError`):
+
+   ```ts
+   export type TacticLabel = { label: string; probability: number }
+   export type ClassifyTacticResponse = {
+     labels: TacticLabel[]
+     model_version: string
+   }
+
+   export async function classifyTactic(
+     fen: string,
+     signal?: AbortSignal,
+   ): Promise<ClassifyTacticResponse> {
+     // POST `${API_BASE}/api/classify-tactic` body { fen }
+   }
+   ```
+
+   Tidak perlu ubah `vite.config.ts`; proxy `/api` sudah ada.
+
+2. **Panggil hanya saat `turn === 'white'`.** FEN yang dikirim adalah FEN
+   **posisi saat ini** (`fen` computed yang sudah dipakai `classifyFen`), bukan
+   `fen_before`. Jangan menerapkan langkah apa pun lebih dulu. Bila
+   `turn === 'black'`, sembunyikan tombol (atau tampilkan "analisis hanya untuk
+   giliran putih").
+3. **UI** di `src/components/AnalysisPanel.vue`, mengikuti blok fase:
+   loading state, disable tombol saat request jalan, `current.abort()` sebelum
+   request baru, dan tangani error (`422` FEN invalid, `503` model belum
+   dilatih, status `0` jaringan).
+4. **Tampilan hasil:** filter `probability >= 0.5` (atau ambang yang
+   disepakati), lalu ambil top-N (mis. 5) dan urutkan dari yang terbesar. Bila
+   tidak ada yang lolos, tampilkan "tidak ada motif dominan" — jangan paksa
+   menampilkan 5 label. Karena probabilitas masih membawa prior dataset:
+   - jangan tampilkan top-1 sebagai "kesimpulan";
+   - beri label "eksperimental" / "perkiraan";
+   - jangan menjumlahkan probabilitas menjadi 100% (tiap motif independen).
+
+Nama motif yang mungkin muncul ada di bagian 4b/7c. Tidak perlu memetakan ke
+Bahasa Indonesia; boleh tambahkan label tampilan di frontend bila mau.
+
 ## 10. Tanggung jawab backend
 
 Struktur aktual (detail ada di `backend/AGENT.md`):
@@ -322,22 +589,32 @@ Struktur aktual (detail ada di `backend/AGENT.md`):
 ```
 backend/
 ├── main.py                 # entrypoint ASGI (uvicorn main:app)
-├── train.py                # entrypoint training model
+├── train.py                # entrypoint training model fase
+├── train_black_attack.py   # entrypoint training model taktis
+├── prepare_black_attack.py # cek/siapkan dataset taktis
 ├── app/
 │   ├── config.py           # path & setting (env CHESS_*)
 │   ├── api.py              # skema + classifier + endpoint + app factory
-│   └── ml.py               # label + fitur FEN + dataset + training
-├── models/                 # model.joblib + metrics.json (gitignored)
+│   ├── ml.py               # label + fitur FEN + dataset + training fase
+│   ├── tactical.py         # dataset Lichess, label motif, split per GameId
+│   ├── tactical_features.py# 46 fitur taktis dari FEN
+│   └── tactical_training.py# pipeline + evaluasi multi-label
+├── models/                 # *.joblib + *metrics.json (gitignored)
 ├── datasets/               # dataset mentah (gitignored)
 └── tests/
 ```
 
 - Framework: FastAPI + uvicorn + pydantic. Manajemen paket: `uv`.
-- Struktur sengaja **ringkas (2 modul inti):** `app/api.py` = skema → classifier
-  → endpoint → app factory; `app/ml.py` = label → fitur → dataset → training.
+- Struktur sengaja **ringkas:** `app/api.py` = skema → classifier → endpoint →
+  app factory; `app/ml.py` = label → fitur → dataset → training fase.
 - Analisis langkah & langkah bot sudah ditambahkan tanpa menyentuh alur fase
   yang beku: `app/api.py` menampung `MoveAnalyzer` (engine Stockfish) terpisah
   dari `PhaseClassifier` (model ML).
+- Model taktis **terpisah total** dari fase: modul `app/tactical*.py`, artifact
+  sendiri, `TacticalClassifier` sendiri, endpoint `/api/classify-tactic`.
+  `/api/classify` dan `app/ml.py` tidak disentuh.
+- `datasets>=5.1.0` ada di `pyproject.toml`; dataset taktis diunduh ke cache HF
+  saat training pertama, bukan disimpan di repo.
 
 ## 11. Milestone
 
@@ -346,12 +623,14 @@ backend/
 | M0 | FEN generator + endpoint echo | Frontend kirim FEN, backend balas FEN sama | ✅ (digantikan classify nyata) |
 | M1 | Feature + labeling + train + model fase | `/api/classify` balas salah satu dari 3 label | ✅ |
 | M2 | Integrasi `AnalysisPanel` + proxy + CORS | Klik tombol → label muncul | ✅ |
-| M3 | Test + evaluasi model | 51 test hijau; metrik ada | ✅ |
-| M4 | Rapikan struktur backend | 2 modul inti (`app/api.py` + `app/ml.py`) | ✅ |
+| M3 | Test + evaluasi model | test hijau; metrik ada | ✅ |
+| M4 | Rapikan struktur backend | modul inti terpisah per tugas (`api`, `ml`, `tactical*`) | ✅ |
 | M5 | Fitur pola struktur pion | 8 fitur + 8 test | ✅ |
-| M6 | Katalog label dari dua dataset | Bagian 7 dokumen ini | ✅ |
+| M6 | Katalog label dari dataset | Bagian 7 dokumen ini | ✅ |
 | M7 | Endpoint analisis langkah (engine Stockfish) | `{fen_before, move_uci}` → kualitas langkah | ✅ |
-| M8 | Model tema taktis (`puzzles.csv`) | Klasifikasi tema dengan fitur dinamis | 🔜 rencana |
+| M8 | Model tema taktis (`puzzles.csv`) | Klasifikasi tema dengan fitur dinamis | ✅ digantikan M9 (data `puzzles.csv` terlalu kecil) |
+| M9 | Model pola serangan hitam (Lichess) | 23 motif multi-label, endpoint `/api/classify-tactic`, macro-AP 0,274 | ✅ backend |
+| M10 | UI pola serangan hitam | Panel memanggil `/api/classify-tactic` saat giliran putih | ✅ frontend |
 
 ## 12. Non-goals (MVP)
 
@@ -378,7 +657,24 @@ backend/
   `CHESS_STOCKFISH_PATH`.
 - **Probabilitas analisis langkah deterministik** (satu-panas), bukan keyakinan
   statistik — jangan ditampilkan sebagai "confidence model".
-- **Data puzzle kecil** (1.176 baris); jangan berharap model besar.
+- **Data puzzle kecil** (1.176 baris); jangan berharap model besar. Karena itu
+  model taktis memakai `Lichess/chess-puzzles`, bukan `puzzles.csv`.
+- **Model taktis hanya melihat FEN, bukan langkah.** Ia memperkirakan *potensi*
+  motif hitam; jangan mengklaim langkah pasti. FEN giliran hitam tetap diterima
+  tetapi di luar distribusi training.
+- **Probabilitas taktis belum terkalibrasi.** Versi tanpa `class_weight`
+  sudah jauh lebih masuk akal, tetapi masih membawa prior dataset (`mate` ~44%)
+  dan ambang 0,5 belum dituning per motif. Tampilkan sebagai perkiraan
+  eksperimental; jangan pakai top-1 sebagai vonis dan jangan dijumlahkan
+  menjadi 100%.
+- **Motif langka sulit dipelajari** (`interference`, `clearance`,
+  `capturingDefender`, `xRayAttack` AP < 0,06). Bila ditampilkan, beri ambang
+  tinggi atau sembunyikan.
+- **Artifact taktis gitignored.** Clone baru harus
+  `uv run python train_black_attack.py` sebelum endpoint berguna; tanpa itu
+  `/api/classify-tactic` membalas `503` (endpoint fase tetap hidup).
+- **Dataset taktis diunduh saat training pertama** (~1,1 GB cache HF). Butuh
+  koneksi; `HF_TOKEN` opsional untuk rate limit lebih tinggi.
 - **Duplikasi FEN antar-game** membuat metrik optimistis; tetap pakai evaluasi
   dedup FEN.
 - **`halfmove_clock` selalu `0`**; jangan jadikan fitur yang diandalkan.
@@ -393,9 +689,17 @@ Backend:
 cd backend
 uv sync
 uv run uvicorn main:app --reload        # http://localhost:8000
-uv run python train.py                   # latih ulang bila perlu
+uv run python train.py                   # latih ulang model fase
+uv run python train_black_attack.py --sample 200000   # model taktis (cepat)
+uv run python train_black_attack.py --sample 0        # model taktis, semua data
 uv run pytest
 ```
+
+`train_black_attack.py` mengunduh `Lichess/chess-puzzles` ke cache HF pada
+run pertama. Hasil: `models/black_attack.joblib` +
+`models/black_attack_metrics.json` (keduanya gitignored). Env terkait:
+`CHESS_BLACK_ATTACK_MODEL`, `CHESS_BLACK_ATTACK_METRICS`,
+`CHESS_BLACK_ATTACK_MODEL_VERSION`.
 
 Engine analisis langkah: taruh biner Stockfish di `backend/bin/stockfish`
 (atau set `CHESS_STOCKFISH_PATH` ke biner/sistem). Unduhan resmi:
@@ -414,3 +718,8 @@ deno install && deno task dev            # http://localhost:5173
 
 Uji alur fase: buka papan di frontend → klik "Analisis posisi" → label +
 confidence muncul.
+
+Uji alur taktis: pastikan giliran putih → klik "Pola
+serangan hitam" → beberapa motif + persen muncul. Kembalikan ke giliran hitam →
+tombol tidak tersedia. Jika backend tanpa artifact, harus muncul pesan error
+`503` yang ramah, bukan crash.

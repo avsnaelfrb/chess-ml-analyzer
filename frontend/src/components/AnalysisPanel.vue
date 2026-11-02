@@ -5,14 +5,18 @@ import {
   ApiError,
   ClassifyError,
   classifyFen,
+  classifyTactic,
   type AnalyzeMoveResponse,
   type ClassifyResponse,
+  type ClassifyTacticResponse,
   type MoveQuality,
   type PhaseLabel,
 } from '../api/classify'
+import type { Color } from '../types/chess'
 
 const props = defineProps<{
   fen: string
+  turn: Color
   lastMove?: { fenBefore: string; moveUci: string } | null
 }>()
 
@@ -35,8 +39,12 @@ const error = ref<string | null>(null)
 const moveResult = ref<AnalyzeMoveResponse | null>(null)
 const moveError = ref<string | null>(null)
 const moveLoading = ref(false)
+const tacticResult = ref<ClassifyTacticResponse | null>(null)
+const tacticError = ref<string | null>(null)
+const tacticLoading = ref(false)
 let controller: AbortController | null = null
 let moveController: AbortController | null = null
+let tacticController: AbortController | null = null
 
 const confidencePercent = computed(() =>
   result.value ? Math.round(result.value.confidence * 100) : 0,
@@ -63,6 +71,15 @@ const moveProbabilityRows = computed(() => {
   const keys: MoveQuality[] = ['Good', 'Inaccuracy', 'Mistake', 'Blunder']
   return keys.map((k) => ({ key: k, name: QUALITY_NAMES[k], percent: Math.round(probs[k] * 100) }))
 })
+
+// Top-5 motif; backend sudah mengurutkan dari probabilitas tertinggi.
+const tacticRows = computed(
+  () =>
+    tacticResult.value?.labels.slice(0, 5).map(row => ({
+      key: row.label,
+      percent: Math.round(row.probability * 100),
+    })) ?? [],
+)
 
 async function analyze() {
   controller?.abort()
@@ -107,6 +124,27 @@ async function analyzeLastMove() {
   }
 }
 
+async function analyzeTactic() {
+  tacticController?.abort()
+  const current = new AbortController()
+  tacticController = current
+  tacticLoading.value = true
+  tacticError.value = null
+
+  try {
+    tacticResult.value = await classifyTactic(props.fen, current.signal)
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return
+    tacticResult.value = null
+    tacticError.value = err instanceof ApiError ? err.message : 'Terjadi kesalahan tak terduga.'
+  } finally {
+    if (tacticController === current) {
+      tacticLoading.value = false
+      tacticController = null
+    }
+  }
+}
+
 // Hasil lama tidak relevan setelah posisi berubah.
 watch(
   () => props.fen,
@@ -116,6 +154,11 @@ watch(
     loading.value = false
     result.value = null
     error.value = null
+    tacticController?.abort()
+    tacticController = null
+    tacticLoading.value = false
+    tacticResult.value = null
+    tacticError.value = null
   },
 )
 
@@ -134,6 +177,7 @@ watch(
 onBeforeUnmount(() => {
   controller?.abort()
   moveController?.abort()
+  tacticController?.abort()
 })
 </script>
 
@@ -196,6 +240,40 @@ onBeforeUnmount(() => {
       </div>
       <p class="model-version">
         model v{{ moveResult.model_version }}{{ moveResult.cp_loss !== null ? ` • cp_loss: ${moveResult.cp_loss}` : '' }}
+      </p>
+    </div>
+
+    <div class="section-head" style="margin-top: 1.5rem">
+      <h2>Pola serangan hitam</h2>
+      <span>EKSPERIMENTAL</span>
+    </div>
+    <p class="analysis-desc">
+      Perkiraan motif taktik hitam dari posisi ini. Tiap motif berdiri sendiri,
+      bukan persentase dari 100%.
+    </p>
+
+    <button
+      v-if="turn === 'white'"
+      class="analysis-button"
+      :disabled="tacticLoading"
+      @click="analyzeTactic"
+    >
+      {{ tacticLoading ? 'Menganalisis…' : 'Pola serangan hitam' }}
+    </button>
+    <p v-else class="analysis-desc">Hanya tersedia saat giliran putih.</p>
+
+    <div v-if="tacticError" class="analysis-error">{{ tacticError }}</div>
+
+    <div v-else-if="tacticResult" class="analysis-result">
+      <div class="prob-list">
+        <div v-for="row in tacticRows" :key="row.key" class="prob-row">
+          <span class="prob-name">{{ row.key }}</span>
+          <span class="prob-bar"><i :style="{ width: row.percent + '%' }"></i></span>
+          <span class="prob-value">{{ row.percent }}%</span>
+        </div>
+      </div>
+      <p class="model-version">
+        model v{{ tacticResult.model_version }} • perkiraan, bukan kepastian
       </p>
     </div>
   </div>

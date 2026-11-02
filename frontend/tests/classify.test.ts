@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ApiError, bestMove } from '../src/api/classify'
+import { ApiError, bestMove, classifyTactic } from '../src/api/classify'
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -7,6 +7,43 @@ function jsonResponse(body: unknown, status = 200): Response {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+describe('classifyTactic', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('mengirim FEN dan mengembalikan label motif', async () => {
+    const body = {
+      labels: [{ label: 'fork', probability: 0.61 }],
+      model_version: '0.1.0',
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(body))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await classifyTactic('some-fen')
+
+    expect(result).toEqual(body)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/classify-tactic',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ fen: 'some-fen' }),
+      }),
+    )
+  })
+
+  it('memberi pesan ramah saat model belum dilatih', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ detail: 'Model taktis belum tersedia.' }, 503)),
+    )
+
+    await expect(classifyTactic('some-fen')).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 503,
+      message: 'Model taktis belum tersedia.',
+    })
+  })
+})
 
 describe('bestMove', () => {
   afterEach(() => vi.unstubAllGlobals())

@@ -96,7 +96,7 @@ function onUndo() {
       </div>
       <aside class="side-panel">
         <StatusPanel :status="status" :game-over="gameOver" :checked="checked" />
-        <AnalysisPanel :fen="fen" :last-move="lastMoveForPanel" />
+        <AnalysisPanel :fen="fen" :turn="turn" :last-move="lastMoveForPanel" />
         <MoveHistory :moves="moves" />
         <GameControls
           :can-undo="canUndo"

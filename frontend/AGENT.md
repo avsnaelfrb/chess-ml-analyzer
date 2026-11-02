@@ -35,7 +35,7 @@ frontend/
     ├── App.vue               # Shell layout; merangkai komponen dan composable
     ├── style.css             # Tema, layout, papan, panel analisis, responsivitas, dan modal promosi
     ├── api/
-    │   └── classify.ts       # Client fetch ke POST /api/classify & POST /api/analyze-move + tipe respons
+    │   └── classify.ts       # Client fetch ke POST /api/classify, /api/analyze-move, /api/classify-tactic, /api/best-move + tipe respons
     ├── types/
     │   └── chess.ts          # Tipe domain: Color, Piece, Move, Castling, Snapshot
     ├── lib/chess/
@@ -50,7 +50,7 @@ frontend/
         ├── ChessBoard.vue    # Grid papan, bidak, sorotan, dan label
         ├── PlayerCard.vue    # Kartu pemain dan indikator giliran
         ├── StatusPanel.vue   # Status permainan (skak/skakmat/remis)
-        ├── AnalysisPanel.vue # Analisis fase (FEN) + analisis langkah terakhir (fen_before+move_uci)
+        ├── AnalysisPanel.vue # Analisis fase (FEN), langkah terakhir (fen_before+move_uci), pola serangan hitam (FEN)
         ├── MoveHistory.vue   # Riwayat langkah
         ├── GameControls.vue  # Tombol undo dan reset
         └── PromotionModal.vue # Modal pemilihan bidak promosi
@@ -108,6 +108,11 @@ Task di atas didefinisikan di `deno.json` dan memetakan script yang sama di `pac
 - `useChess.makeMove` menyimpan `lastMoveInfo = { fenBefore: fen.value (sebelum apply), moveUci: from+to + promo(q/r/b/n bila ada) }`. `undo()` dan `reset()` mengosongkannya.
 - `App.vue` meneruskan `lastMoveInfo` ke `AnalysisPanel.vue` sebagai prop `lastMove`.
 - `AnalysisPanel.vue` menampilkan tombol "Analisis langkah terakhir" (aktif bila ada langkah terakhir) dan menampilkan hasil `analyzeMove`. Hasil direset saat posisi/terakhir berubah.
+
+### Pola serangan hitam (sudah terintegrasi)
+- Endpoint: `POST /api/classify-tactic` menerima `{ "fen": "..." }` dan mengembalikan `{ labels: [{ label, probability }], model_version }` (PLANNING.md bagian 4b). Semua 23 motif dikembalikan, sudah urut dari probabilitas tertinggi.
+- `AnalysisPanel.vue` menerima prop `turn`; tombol hanya tampil saat `turn === 'white'` karena model hanya dilatih pada FEN giliran putih. FEN yang dikirim adalah posisi saat ini.
+- Hasil ditampilkan sebagai top-5 motif (bukan top-1, probabilitas tidak dijumlahkan) dengan catatan "eksperimental". Error `422`/`503`/jaringan tampil sebagai pesan biasa.
 
 ## Perubahan backend yang perlu diketahui
 
